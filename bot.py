@@ -24,7 +24,7 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 BOT_TOKEN = "8819592873:AAE1qr_QTklOvGkpEA3yXKnlNJMtdzPhiXs"
-DATA_KEY = "demo"
+DATA_KEY = "demo"  # استبدل كلمة "demo" بمفتاح API الخاص بك من موقع Twelve Data
 API = "https://api.twelvedata.com"
 
 MARKETS = [
