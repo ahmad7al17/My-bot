@@ -8,7 +8,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 
-# خادم ويب وهمي لترضية منصة Render
+# 1. خادم ويب وهمي لترضية منصة Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -22,7 +22,8 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-BOT_TOKEN = "8877036116:AAH9zil46fP5C-z9jHSvpGHXwYrtqAPKtY4"
+# 2. البيانات الأساسية للتيليجرام (التوكن الجديد) وموقع Twelve Data
+BOT_TOKEN = "8819592873:AAE1qr_QTklOvGkpEA3yXKnlNJMtdzPhiXs"
 DATA_KEY = "demo"
 API = "https://api.twelvedata.com"
 
