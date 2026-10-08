@@ -5,10 +5,10 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 
-# 1. خادم ويب وهمي لترضية منصة Render
+# خادم ويب وهمي لترضية منصة Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -22,7 +22,6 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# 2. البيانات الأساسية للتيليجرام (التوكن الجديد) وموقع Twelve Data
 BOT_TOKEN = "8819592873:AAE1qr_QTklOvGkpEA3yXKnlNJMtdzPhiXs"
 DATA_KEY = "demo"
 API = "https://api.twelvedata.com"
@@ -273,7 +272,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
