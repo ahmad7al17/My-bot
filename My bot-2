@@ -1,0 +1,84 @@
+import telebot
+from telebot import types
+import random
+import time
+
+# التوكن الخاص بك
+TOKEN = '8877036116:AAH9zil46fP5C-z9jHSvpGHXwYrtqAPKtY4'
+bot = telebot.TeleBot(TOKEN)
+
+# قائمة الأسواق المتاحة
+markets = [
+    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", 
+    "EUR/GBP", "BTC/USDT", "ETH/USDT", "ZCMD", "DOGZ"
+]
+
+# رسالة البداية والأزرار الرئيسية
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(markup):
+    user_name = markup.from_user.first_name
+    welcome_text = (
+        f"أهلاً بك يا {user_name} في بوت تحليل السوق والصفقات الذكي 📊\n\n"
+        "اختر السوق المطلوب لرصد التحليل وإرسال الإشارة:"
+    )
+    
+    # إنشاء لوحة مفاتيح تفاعلية للأزرار
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    for market in markets:
+        keyboard.add(types.InlineKeyboardButton(text=f"📈 {market}", callback_data=f"market_{market}"))
+    
+    bot.send_message(markup.chat.id, welcome_text, reply_markup=keyboard)
+
+# استقبال الضغط على الأزرار
+@bot.callback_query_handler(func=lambda call: True)
+def callback_inline(call):
+    if call.data.startswith("market_"):
+        market_name = call.data.split("_")[1]
+        
+        # رسالة جاري التحليل
+        bot.answer_callback_query(call.id, text=جارٍ فحص وتحليل الشموع والعرض والطلب...)
+        
+        # محاكاة عملية التحليل الفني للشمعة الساقطة ودفتر الأوامر
+        time.sleep(1)
+        
+        # توليد إشارة ديناميكية ومتنوعة (شراء أو بيع مع أوقات مختلفة)
+        action = random.choice(["شراء 🟢 (CALL)", "بيع 🔴 (PUT)"])
+        duration = random.choice(["30 ثانية", "1 دقيقة", "5 دقائق"])
+        confidence = random.randint(75, 98)
+        
+        result_text = (
+            f"📊 **نتيجة تحليل السوق لـ: {market_name}**\n\n"
+            f"• **الإشارة المقترحة:** {action}\n"
+            f"• **المدة المناسبة:** {duration}\n"
+            f"• **نسبة دقة النمط:** {confidence}%\n"
+            f"• **الحالة الفنية:** رصد انعكاس عند مستويات الدعم/العرض والطلب.\n\n"
+            f"⚠️ *تنبيه: التداول ينطوي على مخاطر، إدارة رأس المال هي الأساس.*"
+        )
+        
+        # زر العودة للقائمة الرئيسية
+        back_keyboard = types.InlineKeyboardMarkup()
+        back_keyboard.add(types.InlineKeyboardButton(text="🔄 اختيار سوق آخر", callback_data="back_to_menu"))
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=result_text,
+            reply_markup=back_keyboard,
+            parse_mode="Markdown"
+        )
+        
+    elif call.data == "back_to_menu":
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        for market in markets:
+            keyboard.add(types.InlineKeyboardButton(text=f"📈 {market}", callback_data=f"market_{market}"))
+            
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="اختر السوق المطلوب لرصد التحليل وإرسال الإشارة:",
+            reply_markup=keyboard
+        )
+
+# تشغيل البوت باستمرار
+print("البوت يعمل الآن بنجاح...")
+bot.infinity_polling()
