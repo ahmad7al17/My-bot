@@ -23,49 +23,51 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
+# التوكن الصحيح الخاص ببوتك AhmadenoBot
 BOT_TOKEN = "8819592873:AAE1qr_QTklOvGkpEA3yXKnlNJMtdzPhiXs"
 
-# قائمة شاملة بجميع الأسواق والأصول المتاحة على منصة EO Broker وما يعادلها في مزود البيانات
+# قائمة الأسواق المفلترة والمطابقة لأشهر أصول منصات التداول
 MARKETS = [
-    # العملات الأجنبية (Forex)
-    ("🇪🇺 EUR/USD", "EURUSD=X"),
-    ("🇬🇧 GBP/USD", "GBPUSD=X"),
-    ("🇯🇵 USD/JPY", "USDJPY=X"),
-    ("🇦🇺 AUD/USD", "AUDUSD=X"),
-    ("🇨🇦 USD/CAD", "USDCAD=X"),
-    ("🇨🇭 USD/CHF", "USDCHF=X"),
-    ("🇳🇿 NZD/USD", "NZDUSD=X"),
-    ("🇪🇺🇬🇧 EUR/GBP", "EURGBP=X"),
-    ("🇪🇺🇯🇵 EUR/JPY", "EURJPY=X"),
-    ("🇬🇧🇯🇵 GBP/JPY", "GBPJPY=X"),
+    # --- العملات الأجنبية (Forex) ---
+    ("🇪🇺/🇺🇸 EUR/USD", "EURUSD=X"),
+    ("🇬🇧/🇺🇸 GBP/USD", "GBPUSD=X"),
+    ("🇺🇸/🇯🇵 USD/JPY", "USDJPY=X"),
+    ("🇦🇺/🇺🇸 AUD/USD", "AUDUSD=X"),
+    ("🇺🇸/🇨🇦 USD/CAD", "USDCAD=X"),
+    ("🇺🇸/🇨🇭 USD/CHF", "USDCHF=X"),
+    ("🇳🇿/🇺🇸 NZD/USD", "NZDUSD=X"),
+    ("🇪🇺/🇬🇧 EUR/GBP", "EURGBP=X"),
+    ("🇪🇺/🇯🇵 EUR/JPY", "EURJPY=X"),
+    ("🇬🇧/🇯🇵 GBP/JPY", "GBPJPY=X"),
+    ("🇦🇺/🇯🇵 AUD/JPY", "AUDJPY=X"),
     
-    # السلع والمعادن (Commodities)
-    ("🪙 Gold (الذهب)", "GC=F"),
-    ("⚪ Silver (الفضة)", "SI=F"),
+    # --- السلع والمعادن (Commodities) ---
+    ("🥇 Gold (الذهب)", "GC=F"),
+    ("🥈 Silver (الفضة)", "SI=F"),
     ("🛢️ Crude Oil (النفط)", "CL=F"),
     ("⛽ Brent Oil (برنت)", "BZ=F"),
     
-    # العملات الرقمية (Cryptos)
-    ("₿ Bitcoin", "BTC-USD"),
-    ("💎 Ethereum", "ETH-USD"),
-    ("🪙 Litecoin", "LTC-USD"),
-    ("🟣 Ripple (XRP)", "XRP-USD"),
-    
-    # الأسهم العالمية الكبرى (Stocks)
+    # --- العملات الرقمية (Cryptos) ---
+    ("₿ Bitcoin (BTC)", "BTC-USD"),
+    ("💎 Ethereum (ETH)", "ETH-USD"),
+    ("🟣 Solana (SOL)", "SOL-USD"),
+    ("⚡ Ripple (XRP)", "XRP-USD"),
+    ("🪙 Cardano (ADA)", "ADA-USD"),
+
+    # --- الأسهم العالمية الكبرى (Stocks) ---
     ("🍎 Apple", "AAPL"),
     ("🚗 Tesla", "TSLA"),
+    ("💚 NVIDIA", "NVDA"),
     ("📦 Amazon", "AMZN"),
     ("💻 Microsoft", "MSFT"),
     ("🔎 Google", "GOOGL"),
     ("👥 Meta", "META"),
-    ("🎬 Netflix", "NFLX"),
-    ("💳 Visa", "V"),
-    ("🍟 McDonald's", "MCD"),
     
-    # المؤشرات العالمية (Indices)
+    # --- المؤشرات العالمية (Indices) ---
     ("📊 S&P 500", "^GSPC"),
-    ("📈 Nasdaq", "^IXIC"),
-    ("📉 Dow Jones", "^DJI"),
+    ("📈 Nasdaq 100", "^IXIC"),
+    ("📉 Dow Jones 30", "^DJI"),
+    ("🇩🇪 Germany 40 (DAX)", "^GDAXI"),
 ]
 
 PERIODS = [
@@ -73,8 +75,8 @@ PERIODS = [
     ("15 ثانية", "15s"),
     ("30 ثانية", "30s"),
     ("45 ثانية", "45s"),
-    ("دقيقتان", "2m"),
     ("1 دقيقة", "1m"),
+    ("دقيقتان", "2m"),
     ("5 دقائق", "5m"),
     ("15 دقيقة", "15m"),
     ("1 ساعة", "1h"),
@@ -101,7 +103,7 @@ def get_data(symbol):
             if c is not None:
                 candles.append({"close": float(c)})
         
-        if len(candles) < 55:
+        if len(candles) < 60:
             raise ValueError("الشموع المتاحة غير كافية")
             
         return candles
@@ -113,6 +115,15 @@ def ema(values, period):
     result = [values[0]]
     for value in values[1:]:
         result.append(alpha * value + (1 - alpha) * result[-1])
+    return result
+
+def sma(values, period):
+    result = []
+    for i in range(len(values)):
+        if i < period - 1:
+            result.append(sum(values[:i+1]) / (i + 1))
+        else:
+            result.append(sum(values[i-period+1:i+1]) / period)
     return result
 
 def calc_rsi(values, period=14):
@@ -131,6 +142,22 @@ def calc_rsi(values, period=14):
         return 100.0
     return 100 - 100 / (1 + gain / loss)
 
+def calc_bollinger_bands(values, period=20, num_std=2):
+    middle = sma(values, period)
+    std = []
+    for i in range(len(values)):
+        if i < period - 1:
+            chunk = values[:i+1]
+        else:
+            chunk = values[i-period+1:i+1]
+        mean = sum(chunk) / len(chunk)
+        variance = sum((x - mean) ** 2 for x in chunk) / len(chunk)
+        std.append(variance ** 0.5)
+    
+    upper = [m + (num_std * s) for m, s in zip(middle, std)]
+    lower = [m - (num_std * s) for m, s in zip(middle, std)]
+    return upper, middle, lower
+
 def analyze(symbol):
     candles = get_data(symbol)
     close = [c["close"] for c in candles]
@@ -138,59 +165,76 @@ def analyze(symbol):
 
     e9 = ema(close, 9)
     e21 = ema(close, 21)
+    e50 = ema(close, 50)
     e12 = ema(close, 12)
     e26 = ema(close, 26)
 
     macd = [a - b for a, b in zip(e12, e26)]
     macd_signal = ema(macd, 9)
     rsi = calc_rsi(close)
+    upper_band, middle_band, lower_band = calc_bollinger_bands(close)
 
     buy = 0
     sell = 0
     reasons = []
 
-    if e9[-1] > e21[-1]:
-        buy += 1
-        reasons.append("EMA9 أعلى من EMA21")
-    elif e9[-1] < e21[-1]:
-        sell += 1
-        reasons.append("EMA9 أسفل من EMA21")
+    # 1. تقاطع المتوسطات الأسية (EMA Crossover)
+    if e9[-1] > e21[-1] and e21[-1] > e50[-1]:
+        buy += 2
+        reasons.append("المتوسطات مرتبة بصعود قوي (EMA 9 > 21 > 50)")
+    elif e9[-1] < e21[-1] and e21[-1] < e50[-1]:
+        sell += 2
+        reasons.append("المتوسطات مرتبة بهبوط قوي (EMA 9 < 21 < 50)")
 
-    if last > ema(close, 50)[-1]:
+    # 2. مؤشر القوة النسبية (RSI)
+    if 50 < rsi < 70:
         buy += 1
-        reasons.append("السعر فوق EMA50")
-    else:
+        reasons.append(f"مؤشر RSI يدعم الصعود ({rsi:.1f})")
+    elif 30 < rsi < 50:
         sell += 1
-        reasons.append("السعر تحت EMA50")
-
-    if macd[-1] > macd_signal[-1]:
+        reasons.append(f"مؤشر RSI يدعم الهبوط ({rsi:.1f})")
+    elif rsi >= 70:
+        sell += 1
+        reasons.append("RSI في مناطق تشبع شرائي (احتمال انعكاس هابط)")
+    elif rsi <= 30:
         buy += 1
-        reasons.append("MACD إيجابي")
-    else:
-        sell += 1
-        reasons.append("MACD سلبي")
+        reasons.append("RSI في مناطق تشبع بيعي (احتمال انعكاس صاعد)")
 
-    if 52 <= rsi < 68:
+    # 3. مؤشر MACD
+    if macd[-1] > macd_signal[-1] and macd[-1] > 0:
         buy += 1
-        reasons.append("RSI يدعم الزخم الصاعد")
-    elif 32 < rsi <= 48:
+        reasons.append("MACD إيجابي وفوق خط الإشارة")
+    elif macd[-1] < macd_signal[-1] and macd[-1] < 0:
         sell += 1
-        reasons.append("RSI يدعم الزخم الهابط")
+        reasons.append("MACD سلبي وتحت خط الإشارة")
 
-    if buy >= 3 and buy > sell:
+    # 4. نطاقات بولينجر (Bollinger Bands)
+    if last <= lower_band[-1]:
+        buy += 2
+        reasons.append("السعر لامس الحد السفلي لبولينجر باند (فرصة ارتداد صعودي)")
+    elif last >= upper_band[-1]:
+        sell += 2
+        reasons.append("السعر لامس الحد العلوي لبولينجر باند (فرصة ارتداد هبوطي)")
+
+    # شروط القرار النهائي بصرامة لرفع الدقة
+    if buy >= 4 and buy > sell:
+        signal = "🟢 STRONG BUY / شراء قوي جداً"
+    elif buy >= 3 and buy > sell:
         signal = "🟢 BUY / شراء"
+    elif sell >= 4 and sell > buy:
+        signal = "🔴 STRONG SELL / بيع قوي جداً"
     elif sell >= 3 and sell > buy:
         signal = "🔴 SELL / بيع"
     else:
-        signal = "⚪ WAIT / انتظار"
-        reasons = ["المؤشرات غير متوافقة بما يكفي"]
+        signal = "⚪ WAIT / انتظار (السوق غير مستقر)"
+        reasons = ["المؤشرات متضاربة أو السوق في حالة تذبذب عرضي"]
 
     return {
         "price": last,
         "rsi": rsi,
         "ema9": e9[-1],
         "ema21": e21[-1],
-        "ema50": ema(close, 50)[-1],
+        "ema50": e50[-1],
         "macd": macd[-1] - macd_signal[-1],
         "signal": signal,
         "reasons": reasons,
@@ -199,44 +243,23 @@ def analyze(symbol):
 def markets_keyboard():
     rows = []
     for i in range(0, len(MARKETS), 2):
-        row = [
-            InlineKeyboardButton(
-                MARKETS[i][0],
-                callback_data="M|" + MARKETS[i][1]
-            )
-        ]
+        row = [InlineKeyboardButton(MARKETS[i][0], callback_data="M|" + MARKETS[i][1])]
         if i + 1 < len(MARKETS):
-            row.append(
-                InlineKeyboardButton(
-                    MARKETS[i+1][0],
-                    callback_data="M|" + MARKETS[i+1][1]
-                )
-            )
+            row.append(InlineKeyboardButton(MARKETS[i+1][0], callback_data="M|" + MARKETS[i+1][1]))
         rows.append(row)
     return InlineKeyboardMarkup(rows)
 
 def period_keyboard(symbol):
-    rows = [
-        [InlineKeyboardButton(
-            "⏱️ " + label,
-            callback_data=f"P|{symbol}|{period}"
-        )]
-        for label, period in PERIODS
-    ]
-    rows.append([
-        InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")
-    ])
+    rows = [[InlineKeyboardButton("⏱️ " + label, callback_data=f"P|{symbol}|{period}")] for label, period in PERIODS]
+    rows.append([InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")])
     return InlineKeyboardMarkup(rows)
 
 def again_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 تحليل سوق آخر", callback_data="BACK")]
-    ])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحليل سوق آخر", callback_data="BACK")]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 بوت تحليل الأسواق الفني المتقدم\n\n"
-        "اختر السوق الذي تريد تحليله:",
+        "🤖 بوت تحليل الأسواق الفني المتقدم\n\nاختر السوق الذي تريد تحليله:",
         reply_markup=markets_keyboard()
     )
 
@@ -245,64 +268,46 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if q.data == "BACK":
-        await q.edit_message_text(
-            "📊 اختر السوق:",
-            reply_markup=markets_keyboard()
-        )
+        await q.edit_message_text("📊 اختر السوق:", reply_markup=markets_keyboard())
         return
 
     if q.data.startswith("M|"):
         symbol = q.data.split("|", 1)[1]
         display_name = next((m[0] for m in MARKETS if m[1] == symbol), symbol)
-        await q.edit_message_text(
-            f"السوق: {display_name}\nاختر أفق التحليل:",
-            reply_markup=period_keyboard(symbol)
-        )
+        await q.edit_message_text(f"السوق: {display_name}\nاختر أفق التحليل:", reply_markup=period_keyboard(symbol))
         return
 
     if q.data.startswith("P|"):
         _, symbol, period = q.data.split("|")
         labels = dict((v, k) for k, v in PERIODS)
         display_name = next((m[0] for m in MARKETS if m[1] == symbol), symbol)
-        await q.edit_message_text("⏳ جارٍ تحليل بيانات السوق عبر المؤشرات الفنية...")
+        await q.edit_message_text("⏳ جارٍ إجراء التحليل الفني والرياضي...")
 
         try:
             a = analyze(symbol)
-            reasons = "\n".join(
-                "• " + html.escape(x) for x in a["reasons"]
-            )
+            reasons = "\n".join("• " + html.escape(x) for x in a["reasons"])
 
             text = (
                 f"📊 السوق: {html.escape(display_name)}\n"
                 f"⏱️ أفق التحليل: {labels.get(period, period)}\n\n"
-                f"💵 آخر إغلاق: {a['price']:.4g}\n"
-                f"🎯 الإشارة: {a['signal']}\n\n"
+                f"💵 السعر الحالي: {a['price']:.4g}\n"
+                f"🎯 التوصية: {a['signal']}\n\n"
                 f"📈 EMA9: {a['ema9']:.4g}\n"
                 f"📈 EMA21: {a['ema21']:.4g}\n"
                 f"📈 EMA50: {a['ema50']:.4g}\n"
                 f"📊 RSI14: {a['rsi']:.2f}\n"
                 f"〽️ MACD: {a['macd']:.4g}\n\n"
-                f"🔎 أسباب التحليل:\n{reasons}\n\n"
-                "⚠️ البيانات تعتمد على تحليل مؤشرات الزخم والشموع الفنية."
+                f"🔎 أسباب التوصية:\n{reasons}\n\n"
+                "⚠️ التوصية مبنية على تقاطع المؤشرات والزخم الفني."
             )
 
-            await q.edit_message_text(
-                text,
-                reply_markup=again_keyboard()
-            )
+            await q.edit_message_text(text, reply_markup=again_keyboard())
 
         except Exception as e:
-            await q.edit_message_text(
-                "❌ تعذر التحليل أو جلب البيانات حالياً.",
-                reply_markup=again_keyboard()
-            )
+            await q.edit_message_text("❌ تعذر التحليل أو جلب البيانات حالياً.", reply_markup=again_keyboard())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "/start لعرض الأسواق\n"
-        "/help للمساعدة\n\n"
-        "البوت يعتمد على التحليل الفني ولا ينفذ صفقات مالية."
-    )
+    await update.message.reply_text("/start لعرض الأسواق\n/help للمساعدة")
 
 def main():
     try:
@@ -318,7 +323,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     
-    print("Trading Bot is running successfully with Yahoo Finance source...")
+    print("Trading Bot is running successfully with AhmadenoBot token...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
