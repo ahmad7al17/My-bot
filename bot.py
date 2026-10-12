@@ -43,6 +43,11 @@ MARKETS = [
 ]
 
 PERIODS = [
+    ("10 ثوانٍ", "10s"),
+    ("15 ثانية", "15s"),
+    ("30 ثانية", "30s"),
+    ("45 ثانية", "45s"),
+    ("دقيقتان", "2m"),
     ("1 دقيقة", "1m"),
     ("5 دقائق", "5m"),
     ("15 دقيقة", "15m"),
@@ -243,7 +248,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             text = (
                 f"📊 السوق: {html.escape(display_name)}\n"
-                f"⏱️ أفق التحليل: {labels[period]}\n\n"
+                f"⏱️ أفق التحليل: {labels.get(period, period)}\n\n"
                 f"💵 آخر إغلاق: {a['price']:.4g}\n"
                 f"🎯 الإشارة: {a['signal']}\n\n"
                 f"📈 EMA9: {a['ema9']:.4g}\n"
