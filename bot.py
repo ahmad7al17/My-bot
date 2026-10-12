@@ -25,21 +25,47 @@ threading.Thread(target=run_server, daemon=True).start()
 
 BOT_TOKEN = "8819592873:AAE1qr_QTklOvGkpEA3yXKnlNJMtdzPhiXs"
 
+# قائمة شاملة بجميع الأسواق والأصول المتاحة على منصة EO Broker وما يعادلها في مزود البيانات
 MARKETS = [
+    # العملات الأجنبية (Forex)
     ("🇪🇺 EUR/USD", "EURUSD=X"),
     ("🇬🇧 GBP/USD", "GBPUSD=X"),
     ("🇯🇵 USD/JPY", "USDJPY=X"),
     ("🇦🇺 AUD/USD", "AUDUSD=X"),
-    ("🪙 Gold", "GC=F"),
-    ("⚪ Silver", "SI=F"),
+    ("🇨🇦 USD/CAD", "USDCAD=X"),
+    ("🇨🇭 USD/CHF", "USDCHF=X"),
+    ("🇳🇿 NZD/USD", "NZDUSD=X"),
+    ("🇪🇺🇬🇧 EUR/GBP", "EURGBP=X"),
+    ("🇪🇺🇯🇵 EUR/JPY", "EURJPY=X"),
+    ("🇬🇧🇯🇵 GBP/JPY", "GBPJPY=X"),
+    
+    # السلع والمعادن (Commodities)
+    ("🪙 Gold (الذهب)", "GC=F"),
+    ("⚪ Silver (الفضة)", "SI=F"),
+    ("🛢️ Crude Oil (النفط)", "CL=F"),
+    ("⛽ Brent Oil (برنت)", "BZ=F"),
+    
+    # العملات الرقمية (Cryptos)
     ("₿ Bitcoin", "BTC-USD"),
     ("💎 Ethereum", "ETH-USD"),
+    ("🪙 Litecoin", "LTC-USD"),
+    ("🟣 Ripple (XRP)", "XRP-USD"),
+    
+    # الأسهم العالمية الكبرى (Stocks)
     ("🍎 Apple", "AAPL"),
     ("🚗 Tesla", "TSLA"),
     ("📦 Amazon", "AMZN"),
     ("💻 Microsoft", "MSFT"),
     ("🔎 Google", "GOOGL"),
     ("👥 Meta", "META"),
+    ("🎬 Netflix", "NFLX"),
+    ("💳 Visa", "V"),
+    ("🍟 McDonald's", "MCD"),
+    
+    # المؤشرات العالمية (Indices)
+    ("📊 S&P 500", "^GSPC"),
+    ("📈 Nasdaq", "^IXIC"),
+    ("📉 Dow Jones", "^DJI"),
 ]
 
 PERIODS = [
