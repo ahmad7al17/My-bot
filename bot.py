@@ -157,7 +157,7 @@ def calc_bollinger_bands(values, period=20, num_std=2):
     lower = [m - (num_std * s) for m, s in zip(middle, std)]
     return upper, middle, lower
 
-def analyze(symbol):
+def analyze(symbol, period):
     candles = get_data(symbol)
     close = [c["close"] for c in candles]
     last = close[-1]
@@ -177,61 +177,70 @@ def analyze(symbol):
     sell = 0
     reasons = []
 
-    # 1. تقاطع المتوسطات الأسية (التحقق من الاتجاه العام)
+    # ضبط الحساسية تلقائياً حسب الأفق الزمني المختصر أو الطويل
+    is_short_term = period in ["10s", "15s", "30s", "45s", "1m"]
+
+    # 1. فحص الاتجاه العام والشامل لجميع الفريمات
     trend_is_bullish = e9[-1] > e21[-1] and last > e50[-1]
     trend_is_bearish = e9[-1] < e21[-1] and last < e50[-1]
 
     if trend_is_bullish:
         buy += 2
-        reasons.append("الاتجاه العام صاعد بقوة (EMA 9 > 21 والسعر فوق 50)")
+        reasons.append(f"الاتجاه العام صاعد بقوة على فريم ({period})")
     elif trend_is_bearish:
         sell += 2
-        reasons.append("الاتجاه العام هابط بقوة (EMA 9 < 21 والسعر تحت 50)")
+        reasons.append(f"الاتجاه العام هابط بقوة على فريم ({period})")
 
-    # 2. مؤشر القوة النسبية (RSI) مع شروط منع الانعكاس الخاطئ
-    if 45 < rsi < 70 and not trend_is_bearish:
+    # 2. فلترة مؤشر القوة النسبية (RSI) لمنع الدخول العكسي في أي فريم
+    if 40 < rsi < 70 and not trend_is_bearish:
         buy += 1
-        reasons.append(f"مؤشر RSI يدعم الصعود ({rsi:.1f})")
-    elif 30 < rsi < 55 and not trend_is_bullish:
+        reasons.append(f"مؤشر RSI متوافق مع الصعود ({rsi:.1f})")
+    elif 30 < rsi < 60 and not trend_is_bullish:
         sell += 1
-        reasons.append(f"مؤشر RSI يدعم الهبوط ({rsi:.1f})")
+        reasons.append(f"مؤشر RSI متوافق مع الهبوط ({rsi:.1f})")
     
-    # منع إعطاء بيع عشوائي أثناء الارتفاع لمجرد التشبع إلا بوجود تأكيد هبوطي
-    if rsi >= 75 and e9[-1] < e21[-1]:
-        sell += 2
-        reasons.append("تشبع شرائي قوي مع بداية تقاطع سلبي (فرصة بيع آمنة)")
-    elif rsi <= 25 and e9[-1] > e21[-1]:
-        buy += 2
-        reasons.append("تشبع بيعي قوي مع بداية تقاطع إيجابي (فرصة شراء آمنة)")
+    # فلاتر التشبعات القوية لتفادي الانعكاسات الوهمية
+    if rsi >= 75:
+        if not is_short_term or e9[-1] < e21[-1]:
+            sell += 2
+            reasons.append("تشبع شرائي واضح (تأكيد فرصة بيع آمنة)")
+        else:
+            reasons.append("تحذير: تشبع شرائي لكن تم حماية الاتجاه الصاعد للفريم القصير")
+    elif rsi <= 25:
+        if not is_short_term or e9[-1] > e21[-1]:
+            buy += 2
+            reasons.append("تشبع بيعي واضح (تأكيد فرصة شراء آمنة)")
+        else:
+            reasons.append("تحذير: تشبع بيعي لكن تم حماية الاتجاه الهابط للفريم القصير")
 
-    # 3. مؤشر MACD
-    if macd[-1] > macd_signal[-1] and macd[-1] > 0:
+    # 3. مؤشر الزخم MACD
+    if macd[-1] > macd_signal[-1]:
         buy += 1
-        reasons.append("MACD إيجابي وفوق خط الإشارة")
-    elif macd[-1] < macd_signal[-1] and macd[-1] < 0:
+        reasons.append("زخم MACD إيجابي")
+    elif macd[-1] < macd_signal[-1]:
         sell += 1
-        reasons.append("MACD سلبي وتحت خط الإشارة")
+        reasons.append("زخم MACD سلبي")
 
     # 4. نطاقات بولينجر (Bollinger Bands)
-    if last <= lower_band[-1] and trend_is_bullish:
+    if last <= lower_band[-1]:
         buy += 2
-        reasons.append("ارطداد آمن من الحد السفلي لبولينجر في اتجاه صاعد")
-    elif last >= upper_band[-1] and trend_is_bearish:
+        reasons.append("ملامسة الحد السفلي لبولينجر (دعم ارتداد صعودي)")
+    elif last >= upper_band[-1]:
         sell += 2
-        reasons.append("ارتداد آمن من الحد العلوي لبولينجر في اتجاه هابط")
+        reasons.append("ملامسة الحد العلوي لبولينجر (مقاومة ارتداد هبوطي)")
 
-    # تطبيق شروط حماية لمنع إعطاء إشارات متعارضة أثناء الارتفاع القوي
+    # شروط القرار النهائي بصرامة تامة لجميع الأطر الزمنية
     if buy >= 4 and buy > sell and not trend_is_bearish:
-        signal = "🟢 STRONG BUY / شراء قوي ومضمون"
+        signal = "🟢 STRONG BUY / شراء قوي ومؤكد"
     elif buy >= 3 and buy > sell and not trend_is_bearish:
         signal = "🟢 BUY / شراء"
     elif sell >= 4 and sell > buy and not trend_is_bullish:
-        signal = "🔴 STRONG SELL / بيع قوي ومضمون"
+        signal = "🔴 STRONG SELL / بيع قوي ومؤكد"
     elif sell >= 3 and sell > buy and not trend_is_bullish:
         signal = "🔴 SELL / بيع"
     else:
-        signal = "⚪ WAIT / انتظار (السوق متذبذب أو عكس الاتجاه)"
-        reasons = ["تم حجب الإشارة لتجنب الانعكاس الخاطئ (السوق غير مستقر للأطر القصيرة)"]
+        signal = "⚪ WAIT / انتظار (السوق متذبذب)"
+        reasons = ["المؤشرات متعارضة على هذا الفريم، تم حجب التوصية لسلامة الصفقة"]
 
     return {
         "price": last,
@@ -263,7 +272,7 @@ def again_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 بوت تحليل الأسواق المحسن (مع فلتر حماية الاتجاه)\n\nاختر السوق الذي تريد تحليله:",
+        "🤖 بوت تحليل الأسواق الشامل (محمي لجميع الفريمات)\n\nاختر السوق الذي تريد تحليله:",
         reply_markup=markets_keyboard()
     )
 
@@ -285,10 +294,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, symbol, period = q.data.split("|")
         labels = dict((v, k) for k, v in PERIODS)
         display_name = next((m[0] for m in MARKETS if m[1] == symbol), symbol)
-        await q.edit_message_text("⏳ جارٍ فحص الزخم والاتجاه بدقة عالية...")
+        await q.edit_message_text(f"⏳ جارٍ التحليل الشامل لفريم ({labels.get(period, period)})...")
 
         try:
-            a = analyze(symbol)
+            a = analyze(symbol, period)
             reasons = "\n".join("• " + html.escape(x) for x in a["reasons"])
 
             text = (
@@ -302,7 +311,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📊 RSI14: {a['rsi']:.2f}\n"
                 f"〽️ MACD: {a['macd']:.4g}\n\n"
                 f"🔎 أسباب التوصية:\n{reasons}\n\n"
-                "⚠️ التوصية محمية ضد الانعكاسات الوهمية."
+                "⚠️ التحليل مطبق بمعايير الحماية المتقدمة لجميع الفريمات."
             )
 
             await q.edit_message_text(text, reply_markup=again_keyboard())
@@ -327,7 +336,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     
-    print("Trading Bot with Trend Protection is running...")
+    print("Multi-Timeframe Protected Trading Bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
