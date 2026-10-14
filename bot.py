@@ -1,4 +1,3 @@
-
 import os
 import time
 import threading
@@ -69,7 +68,6 @@ threading.Thread(target=run_server, daemon=True).start()
 
 # =========================================================
 # 3. الأسواق
-# قد تحتاج بعض الرموز إلى تعديل حسب تغطية اشتراكك.
 # =========================================================
 
 MARKETS = [
@@ -107,17 +105,11 @@ UNSUPPORTED_PERIODS = {"30sec", "45sec"}
 # =========================================================
 
 def parse_datetime(value):
-    """تحويل توقيت Twelve Data إلى UTC."""
     dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
     return dt.replace(tzinfo=timezone.utc)
 
 
 def get_live_data(symbol, interval, outputsize=250):
-    """
-    إرجاع شموع OHLC مرتبة زمنيًا.
-    نحذف أحدث شمعة لتجنب استخدام شمعة قد تكون غير مكتملة.
-    """
-
     cache_key = (symbol, interval, outputsize)
     now = time.time()
 
@@ -181,7 +173,6 @@ def get_live_data(symbol, interval, outputsize=250):
         except (KeyError, TypeError, ValueError):
             continue
 
-    # تجنب استخدام أحدث شمعة قد تكون قيد التكوين.
     if candles:
         candles = candles[:-1]
 
@@ -205,11 +196,6 @@ def get_live_data(symbol, interval, outputsize=250):
 # =========================================================
 
 def aggregate_candles(candles, minutes):
-    """
-    تجميع شموع الدقيقة المكتملة.
-    لا نقبل المجموعات الناقصة أو غير المتصلة زمنيًا.
-    """
-
     if minutes not in (2, 3):
         raise ValueError("فريم التجميع غير مدعوم.")
 
@@ -266,7 +252,6 @@ def ema(values, period):
     if len(values) < period:
         raise ValueError("بيانات EMA غير كافية.")
 
-    # تهيئة EMA بمتوسط أول فترة بدل أول سعر فقط.
     result = [None] * (period - 1)
     seed = sum(values[:period]) / period
     result.append(seed)
@@ -384,6 +369,9 @@ def analyze(symbol, period):
     else:
         raise ValueError("الفريم غير معروف.")
 
+    if not candles:
+        raise ValueError("لم يتم استلام بيانات كافية لهذا الفريم.")
+
     close = [c["close"] for c in candles]
 
     last = close[-1]
@@ -399,14 +387,17 @@ def analyze(symbol, period):
     e12 = ema(close, 12)
     e26 = ema(close, 26)
 
-    macd_line = [
-        e12[i] - e26[i]
-        for i in range(len(close))
-    ]
-    macd_signal = ema(macd_line, 9)
-    macd_hist = macd_line[-1] - macd_signal[-1]
+    # حماية من خطأ NoneType أثناء طرح قيم EMA الأولى
+    macd_line = []
+    for v12, v26 in zip(e12, e26):
+        if v12 is not None and v26 is not None:
+            macd_line.append(v12 - v26)
+        else:
+            macd_line.append(0.0)
 
-    # الاتجاه من فريمين أكبر
+    macd_signal = ema(macd_line, 9)
+    macd_hist = macd_line[-1] - macd_signal[-1] if macd_signal[-1] is not None else 0.0
+
     candles5 = get_live_data(symbol, "5min")
     candles15 = get_live_data(symbol, "15min")
 
@@ -417,7 +408,6 @@ def analyze(symbol, period):
     sell_score = 0
     reasons = []
 
-    # اتجاه الفريم الأكبر
     if trend5 == "صاعد" and trend15 == "صاعد":
         buy_score += 3
         reasons.append("اتجاه 5 و15 دقيقة صاعد")
@@ -427,7 +417,6 @@ def analyze(symbol, period):
     else:
         reasons.append("الفريمات الأكبر غير متوافقة")
 
-    # اتجاه الفريم المختار
     if last > e21[-1] and e9[-1] > e21[-1]:
         buy_score += 2
         reasons.append("السعر والمتوسطات يدعمان الصعود")
@@ -436,7 +425,6 @@ def analyze(symbol, period):
         sell_score += 2
         reasons.append("السعر والمتوسطات يدعمان الهبوط")
 
-    # الزخم
     if macd_hist > 0 and rsi >= 52:
         buy_score += 1
         reasons.append("زخم إيجابي")
@@ -445,7 +433,6 @@ def analyze(symbol, period):
         sell_score += 1
         reasons.append("زخم سلبي")
 
-    # تحليل الشمعة المكتملة
     candle = candles[-1]
     body = candle["close"] - candle["open"]
     candle_range = candle["high"] - candle["low"]
@@ -476,11 +463,9 @@ def analyze(symbol, period):
             sell_score += 1
             reasons.append("رفض سعري من الأعلى")
 
-    # فلتر امتداد السعر: تجنب مطاردة حركة بعيدة عن EMA21
     extension = abs(last - e21[-1])
     not_overextended = extension <= 1.5 * atr
 
-    # لا تدخل لمجرد لمس بولينجر أو وصول RSI إلى حد متطرف
     buy_allowed = (
         trend5 == "صاعد"
         and trend15 == "صاعد"
@@ -514,7 +499,6 @@ def analyze(symbol, period):
     else:
         signal = "⚪ انتظار — لا يوجد توافق كافٍ"
 
-    # مستويات مرجعية مبنية على ATR، وليست أوامر تنفيذ
     if buy_allowed:
         stop_reference = last - 1.5 * atr
         target_reference = last + 2.0 * atr
