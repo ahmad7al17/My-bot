@@ -14,7 +14,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Trading Bot is running successfully!")
+        self.wfile.write(b"Advanced Trading Bot is running successfully!")
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -26,88 +26,64 @@ threading.Thread(target=run_server, daemon=True).start()
 # توكن البوت الخاص بك
 BOT_TOKEN = "8819592873:AAE1qr_QTklOvGkpEA3yXKnlNJMtdzPhiXs"
 
-# قائمة الأسواق المطابقة لمنصات التداول
+# مفتاح Twelve Data API الخاص بك
+TWELVE_DATA_API_KEY = "11ecbf4bff0a4629ba9908c436325c77"
+
+# قائمة الأسواق المتوافقة مع رموز Twelve Data الحقيقية
 MARKETS = [
     # --- العملات الأجنبية (Forex) ---
-    ("🇪🇺/🇺🇸 EUR/USD", "EURUSD=X"),
-    ("🇬🇧/🇺🇸 GBP/USD", "GBPUSD=X"),
-    ("🇺🇸/🇯🇵 USD/JPY", "USDJPY=X"),
-    ("🇦🇺/🇺🇸 AUD/USD", "AUDUSD=X"),
-    ("🇺🇸/🇨🇦 USD/CAD", "USDCAD=X"),
-    ("🇺🇸/🇨🇭 USD/CHF", "USDCHF=X"),
-    ("🇳🇿/🇺🇸 NZD/USD", "NZDUSD=X"),
-    ("🇪🇺/🇬🇧 EUR/GBP", "EURGBP=X"),
-    ("🇪🇺/🇯🇵 EUR/JPY", "EURJPY=X"),
-    ("🇬🇧/🇯🇵 GBP/JPY", "GBPJPY=X"),
-    ("🇦🇺/🇯🇵 AUD/JPY", "AUDJPY=X"),
-    ("🇨🇦/🇯🇵 CAD/JPY", "CADJPY=X"),
-    ("🇪🇺/🇦🇺 EUR/AUD", "EURAUD=X"),
-    ("🇬🇧/🇦🇺 GBP/AUD", "GBPAUD=X"),
+    ("🇪🇺/🇺🇸 EUR/USD", "EUR/USD"),
+    ("🇬🇧/🇺🇸 GBP/USD", "GBP/USD"),
+    ("🇺🇸/🇯🇵 USD/JPY", "USD/JPY"),
+    ("🇦🇺/🇺🇸 AUD/USD", "AUD/USD"),
+    ("🇺🇸/🇨🇦 USD/CAD", "USD/CAD"),
+    ("🇺🇸/🇨🇭 USD/CHF", "USD/CHF"),
+    ("🇳🇿/🇺🇸 NZD/USD", "NZD/USD"),
+    ("🇪🇺/🇬🇧 EUR/GBP", "EUR/GBP"),
+    ("🇪🇺/🇯🇵 EUR/JPY", "EUR/JPY"),
+    ("🇬🇧/🇯🇵 GBP/JPY", "GBP/JPY"),
 
     # --- السلع والمعادن (Commodities) ---
-    ("🥇 Gold (الذهب)", "GC=F"),
-    ("🥈 Silver (الفضة)", "SI=F"),
-    ("🛢️ Crude Oil (النفط)", "CL=F"),
-    ("⛽ Brent Oil (برنت)", "BZ=F"),
+    ("🥇 Gold (الذهب)", "XAU/USD"),
+    ("🥈 Silver (الفضة)", "XAG/USD"),
+    ("🛢️ Crude Oil (النفط)", "BRENT"),
     
     # --- العملات الرقمية (Cryptos) ---
-    ("₿ Bitcoin (BTC)", "BTC-USD"),
-    ("💎 Ethereum (ETH)", "ETH-USD"),
-    ("🟣 Solana (SOL)", "SOL-USD"),
-    ("⚡ Ripple (XRP)", "XRP-USD"),
-    ("🪙 Cardano (ADA)", "ADA-USD"),
-    ("🐕 Dogecoin (DOGE)", "DOGE-USD"),
-
-    # --- الأسهم العالمية (Stocks) ---
-    ("🍎 Apple", "AAPL"),
-    ("🚗 Tesla", "TSLA"),
-    ("💚 NVIDIA", "NVDA"),
-    ("📦 Amazon", "AMZN"),
-    ("💻 Microsoft", "MSFT"),
-    ("🔎 Google", "GOOGL"),
-    ("👥 Meta", "META"),
-    ("🎬 Netflix", "NFLX"),
+    ("₿ Bitcoin (BTC)", "BTC/USD"),
+    ("💎 Ethereum (ETH)", "ETH/USD"),
+    ("🟣 Solana (SOL)", "SOL/USD"),
 ]
 
 PERIODS = [
-    ("10 ثوانٍ", "10s"),
-    ("15 ثانية", "15s"),
-    ("30 ثانية", "30s"),
-    ("45 ثانية", "45s"),
-    ("1 دقيقة", "1m"),
-    ("دقيقتان", "2m"),
-    ("5 دقائق", "5m"),
-    ("15 دقيقة", "15m"),
+    ("5 دقائق", "5min"),
+    ("15 دقيقة", "15min"),
+    ("30 دقيقة", "30min"),
     ("1 ساعة", "1h"),
-    ("1 يوم", "1d"),
+    ("1 يوم", "1day"),
 ]
 
-def get_data(symbol):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    params = {'range': '5d', 'interval': '1m'}
+def get_live_data(symbol, interval):
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "outputsize": 60,
+        "apikey": TWELVE_DATA_API_KEY
+    }
     
-    r = requests.get(url, headers=headers, params=params, timeout=20)
-    r.raise_for_status()
+    r = requests.get(url, params=params, timeout=20)
     data = r.json()
 
-    try:
-        result = data['chart']['result'][0]
-        timestamps = result['timestamp']
-        quote = result['indicators']['quote'][0]
-        closes = quote['close']
-        
-        candles = []
-        for t, c in zip(timestamps, closes):
-            if c is not None:
-                candles.append({"close": float(c)})
-        
-        if len(candles) < 60:
-            raise ValueError("الشموع المتاحة غير كافية")
-            
-        return candles
-    except Exception as e:
-        raise ValueError("تعذر جلب بيانات السوق المتاحة")
+    if "code" in data and data["code"] != 200:
+        raise ValueError(data.get("message", "خطأ في جلب البيانات"))
+
+    values = data.get("values", [])
+    if not values:
+        raise ValueError("البيانات غير متاحة حالياً")
+    
+    # ترتيب الشموع من القديم إلى الجديد
+    candles = [{"close": float(v["close"])} for v in reversed(values)]
+    return candles
 
 def ema(values, period):
     alpha = 2 / (period + 1)
@@ -158,10 +134,10 @@ def calc_bollinger_bands(values, period=20, num_std=2):
     return upper, middle, lower
 
 def analyze(symbol, period):
-    candles = get_data(symbol)
+    candles = get_live_data(symbol, period)
     close = [c["close"] for c in candles]
     last = close[-1]
-    prev_close = close[-2] # سعر الشمعة السابقة للتحقق من الاتجاه الفوري
+    prev_close = close[-2]
 
     e9 = ema(close, 9)
     e21 = ema(close, 21)
@@ -178,64 +154,55 @@ def analyze(symbol, period):
     sell = 0
     reasons = []
 
-    # تحديد اتجاه الشمعات الأخيرة فورياً (لحماية حقيقية ضد الانهيارات والارتفاعات المفاجئة)
     is_falling_fast = last < prev_close and e9[-1] < e21[-1]
     is_rising_fast = last > prev_close and e9[-1] > e21[-1]
 
-    # 1. الاتجاه العام
     trend_is_bullish = e9[-1] > e21[-1] and last > e50[-1]
     trend_is_bearish = e9[-1] < e21[-1] and last < e50[-1]
 
     if trend_is_bullish:
         buy += 2
-        reasons.append("الاتجاه العام صاعد")
+        reasons.append("الاتجاه العام صاعد بدقة عالية")
     elif trend_is_bearish:
         sell += 2
-        reasons.append("الاتجاه العام هابط")
+        reasons.append("الاتجاه العام هابط بدقة عالية")
 
-    # 2. مؤشر القوة النسبية (RSI) مع قفل الشراء تماماً في الهبوط
     if 45 < rsi < 70 and not is_falling_fast:
         buy += 1
-        reasons.append(f"RSI يدعم الصعود ({rsi:.1f})")
+        reasons.append(f"مؤشر RSI إيجابي ({rsi:.1f})")
     elif 30 < rsi < 55 and not is_rising_fast:
         sell += 1
-        reasons.append(f"RSI يدعم الهبوط ({rsi:.1f})")
+        reasons.append(f"مؤشر RSI سلبي ({rsi:.1f})")
 
-    # 3. مؤشر الزخم MACD
     if macd[-1] > macd_signal[-1] and not is_falling_fast:
         buy += 1
-        reasons.append("MACD إيجابي")
+        reasons.append("زخم MACD يدعم الصعود")
     elif macd[-1] < macd_signal[-1] and not is_rising_fast:
         sell += 1
-        reasons.append("MACD سلبي")
+        reasons.append("زخم MACD يدعم الهبوط")
 
-    # 4. نطاقات بولينجر (حظر الشراء إذا كان السعر يكسر الحد السفلي بنزول حر)
     if last <= lower_band[-1] and not is_falling_fast:
         buy += 2
-        reasons.append("ارتداد حقيقي من الحد السفلي لبولينجر")
+        reasons.append("ارتداد مدعوم من بولينجر السفلي")
     elif last >= upper_band[-1] and not is_rising_fast:
         sell += 2
-        reasons.append("ارتداد حقيقي من الحد العلوي لبولينجر")
+        reasons.append("ارتداد مدعوم من بولينجر العلوي")
 
-    # --- فلتر الأمان المطلق لمنع الكارثة الظاهرة في الصورة ---
     if is_falling_fast:
-        # إذا كان السوق هابطاً بسرعة، نلغي أي تفكير في الشراء تماماً!
         buy = 0
-        reasons = ["تم حظر الشراء تماماً: السوق في حالة هبوط حر وعنيف"]
+        reasons = ["تم حظر الشراء: السوق يمر بهبوط حاد متسارع"]
     
     if is_rising_fast:
-        # إذا كان السوق صاعداً بقوة، نلغي أي تفكير في البيع تماماً!
         sell = 0
-        reasons = ["تم حظر البيع تماماً: السوق في حالة ارتفاع قوي وعنيف"]
+        reasons = ["تم حظر البيع: السوق يمر بارتفاع حاد متسارع"]
 
-    # القرار النهائي الصارم
     if buy >= 3 and buy > sell and not is_falling_fast:
-        signal = "🟢 BUY / شراء آمن"
+        signal = "🟢 STRONG BUY / شراء مؤكد"
     elif sell >= 3 and sell > buy and not is_rising_fast:
-        signal = "🔴 SELL / بيع آمن"
+        signal = "🔴 STRONG SELL / بيع مؤكد"
     else:
-        signal = "⚪ WAIT / انتظار (حماية من الانعكاس)"
-        reasons = ["السوق يتحرك بزخم قوي، تم حجب التوصية لمنع خسارة الصفقة"]
+        signal = "⚪ WAIT / انتظار (حماية كاملة)"
+        reasons = ["السوق غير مستقر، تم حجب الإشارة لمنع الخسارة"]
 
     return {
         "price": last,
@@ -267,7 +234,7 @@ def again_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 بوت تحليل الأسواق (النسخة الآمنة والمحصنة ضد الهبوط الحر)\n\nاختر السوق:",
+        "🤖 بوت التحليل المتقدم (مدعوم ببيانات Twelve Data الحية)\n\nاختر السوق:",
         reply_markup=markets_keyboard()
     )
 
@@ -289,7 +256,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, symbol, period = q.data.split("|")
         labels = dict((v, k) for k, v in PERIODS)
         display_name = next((m[0] for m in MARKETS if m[1] == symbol), symbol)
-        await q.edit_message_text("⏳ جارٍ فحص الحماية ومنع الانعكاسات...")
+        await q.edit_message_text("⏳ جارٍ جلب البيانات الحية والتحليل المتقدم...")
 
         try:
             a = analyze(symbol, period)
@@ -298,7 +265,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 f"📊 السوق: {html.escape(display_name)}\n"
                 f"⏱️ أفق التحليل: {labels.get(period, period)}\n\n"
-                f"💵 السعر الحالي: {a['price']:.4g}\n"
+                f"💵 السعر اللحظي: {a['price']:.4g}\n"
                 f"🎯 التوصية: {a['signal']}\n\n"
                 f"📈 EMA9: {a['ema9']:.4g}\n"
                 f"📈 EMA21: {a['ema21']:.4g}\n"
@@ -306,13 +273,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📊 RSI14: {a['rsi']:.2f}\n"
                 f"〽️ MACD: {a['macd']:.4g}\n\n"
                 f"🔎 أسباب التوصية:\n{reasons}\n\n"
-                "🛡️ محمي ضد الصفقات العكسية."
+                "🛡️ بيانات حقيقية ومحمية."
             )
 
             await q.edit_message_text(text, reply_markup=again_keyboard())
 
         except Exception as e:
-            await q.edit_message_text("❌ تعذر التحليل أو جلب البيانات حالياً.", reply_markup=again_keyboard())
+            await q.edit_message_text(f"❌ خطأ في جلب البيانات: {str(e)}", reply_markup=again_keyboard())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("/start لعرض الأسواق\n/help للمساعدة")
@@ -331,7 +298,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     
-    print("Anti-Crash Protected Trading Bot is running...")
+    print("Advanced Twelve Data Bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
