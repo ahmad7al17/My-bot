@@ -41,7 +41,7 @@ MARKETS = [
     ("🇳🇿/🇺🇸 NZD/USD", "NZD/USD"),
     ("🇪🇺/🇬🇧 EUR/GBP", "EUR/GBP"),
     ("🇪🇺/🇯🇵 EUR/JPY", "EUR/JPY"),
-    ("🇬🇧/🇯🇵 GBP/JPY", "GBPJPY=X"),
+    ("🇬🇧/🇯🇵 GBP/JPY", "GBP/JPY"),
 
     # --- السلع والمعادن (Commodities) ---
     ("🥇 Gold (الذهب)", "XAU/USD"),
@@ -82,8 +82,14 @@ def get_live_data(symbol, interval):
     if not values:
         raise ValueError("البيانات غير متاحة حالياً")
     
-    # ترتيب الشموع من القديم إلى الجديد
-    candles = [{"close": float(v["close"])} for v in reversed(values)]
+    # جلب تفاصيل الشموع (فتح، إغلاق، أعلى، أدنى) لحساب أحجام الشموع والفلترة المتقدمة
+    candles = [{
+        "open": float(v["open"]),
+        "high": float(v["high"]),
+        "low": float(v["low"]),
+        "close": float(v["close"])
+    } for v in reversed(values)]
+    
     return candles
 
 def ema(values, period):
@@ -140,6 +146,7 @@ def analyze(symbol, period):
     last = close[-1]
     prev_close = close[-2]
 
+    # حساب مؤشرات الزخم والمتوسطات المتقدمة
     e9 = ema(close, 9)
     e21 = ema(close, 21)
     e50 = ema(close, 50)
@@ -150,6 +157,14 @@ def analyze(symbol, period):
     macd_signal = ema(macd, 9)
     rsi = calc_rsi(close)
     upper_band, middle_band, lower_band = calc_bollinger_bands(close)
+
+    # حساب خصائص الشمعة الحالية والأخيرة للفلترة
+    last_candle = candles[-1]
+    body_size = abs(last_candle["close"] - last_candle["open"])
+    total_candle_range = last_candle["high"] - last_candle["low"]
+    
+    # فلتر حماية ضد الشموع العشوائية أو ذات الذيل الكبير (التلاعب اللحظي)
+    is_abnormal_candle = total_candle_range > 0 and (body_size / total_candle_range < 0.2)
 
     buy = 0
     sell = 0
@@ -168,42 +183,50 @@ def analyze(symbol, period):
         sell += 2
         reasons.append("الاتجاه العام هابط بدقة عالية")
 
-    if 45 < rsi < 70 and not is_falling_fast:
+    if 48 < rsi < 68 and not is_falling_fast:
         buy += 1
-        reasons.append(f"مؤشر RSI إيجابي ({rsi:.1f})")
-    elif 30 < rsi < 55 and not is_rising_fast:
+        reasons.append(f"مؤشر RSI إيجابي ومستقر ({rsi:.1f})")
+    elif 32 < rsi < 52 and not is_rising_fast:
         sell += 1
-        reasons.append(f"مؤشر RSI سلبي ({rsi:.1f})")
+        reasons.append(f"مؤشر RSI سلبي ومستقر ({rsi:.1f})")
 
     if macd[-1] > macd_signal[-1] and not is_falling_fast:
         buy += 1
-        reasons.append("زخم MACD يدعم الصعود")
+        reasons.append("زخم MACD الإيجابي مؤكد")
     elif macd[-1] < macd_signal[-1] and not is_rising_fast:
         sell += 1
-        reasons.append("زخم MACD يدعم الهبوط")
+        reasons.append("زخم MACD السلبي مؤكد")
 
     if last <= lower_band[-1] and not is_falling_fast:
         buy += 2
-        reasons.append("ارتداد مدعوم من بولينجر السفلي")
+        reasons.append("ارتداد مدعوم بقوة من بولينجر السفلي")
     elif last >= upper_band[-1] and not is_rising_fast:
         sell += 2
-        reasons.append("ارتداد مدعوم من بولينجر العلوي")
+        reasons.append("ارتداد مدعوم بقوة من بولينجر العلوي")
 
-    if is_falling_fast:
+    # تطبيق فلاتر الحماية الصارمة ضد الهبوط/الارتفاع الحاد والشموع غير المستقرة
+    if is_falling_fast or is_abnormal_candle:
         buy = 0
-        reasons = ["تم حظر الشراء: السوق يمر بهبوط حاد متسارع"]
+        if is_abnormal_candle:
+            reasons = ["تم حظر الشراء: رصد شمعة غير مستقرة ذات ذيل عالي"]
+        else:
+            reasons = ["تم حظر الشراء: السوق يمر بهبوط حاد متسارع"]
     
-    if is_rising_fast:
+    if is_rising_fast or is_abnormal_candle:
         sell = 0
-        reasons = ["تم حظر البيع: السوق يمر بارتفاع حاد متسارع"]
+        if is_abnormal_candle and "تم حظر الشراء" not in reasons:
+            reasons = ["تم حظر البيع: رصد شمعة غير مستقرة ذات ذيل عالي"]
+        elif is_rising_fast:
+            reasons = ["تم حظر البيع: السوق يمر بارتفاع حاد متسارع"]
 
-    if buy >= 3 and buy > sell and not is_falling_fast:
+    if buy >= 3 and buy > sell and not is_falling_fast and not is_abnormal_candle:
         signal = "🟢 STRONG BUY / شراء مؤكد"
-    elif sell >= 3 and sell > buy and not is_rising_fast:
+    elif sell >= 3 and sell > buy and not is_rising_fast and not is_abnormal_candle:
         signal = "🔴 STRONG SELL / بيع مؤكد"
     else:
         signal = "⚪ WAIT / انتظار (حماية كاملة)"
-        reasons = ["السوق غير مستقر، تم حجب الإشارة لمنع الخسارة"]
+        if not any("تم حظر" in r for r in reasons):
+            reasons = ["السوق غير مستقر، تم حجب الإشارة لمنع الخسارة"]
 
     return {
         "price": last,
@@ -235,7 +258,7 @@ def again_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 بوت التحليل المتقدم (مدعوم ببيانات Twelve Data الحية)\n\nاختر السوق:",
+        "🤖 بوت التحليل المتقدم والمحمي (مدعوم بفلاتر الشموع والزخم)\n\nاختر السوق:",
         reply_markup=markets_keyboard()
     )
 
@@ -257,7 +280,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, symbol, period = q.data.split("|")
         labels = dict((v, k) for k, v in PERIODS)
         display_name = next((m[0] for m in MARKETS if m[1] == symbol), symbol)
-        await q.edit_message_text("⏳ جارٍ جلب البيانات الحية والتحليل المتقدم...")
+        await q.edit_message_text("⏳ جارٍ جلب البيانات الحية وتطبيق فلاتر الحماية...")
 
         try:
             a = analyze(symbol, period)
@@ -273,8 +296,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📈 EMA50: {a['ema50']:.4g}\n"
                 f"📊 RSI14: {a['rsi']:.2f}\n"
                 f"〽️ MACD: {a['macd']:.4g}\n\n"
-                f"🔎 أسباب التوصية:\n{reasons}\n\n"
-                "🛡️ بيانات حقيقية ومحمية."
+                f"🔎 أسباب التوصية وفلاتر الأمان:\n{reasons}\n\n"
+                "🛡️ محمية بأحدث خوارزميات التصفية."
             )
 
             await q.edit_message_text(text, reply_markup=again_keyboard())
@@ -299,7 +322,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     
-    print("Advanced Twelve Data Bot is running...")
+    print("Advanced Protected Trading Bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
