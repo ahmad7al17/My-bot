@@ -41,7 +41,7 @@ MARKETS = [
     ("🇳🇿/🇺🇸 NZD/USD", "NZD/USD"),
     ("🇪🇺/🇬🇧 EUR/GBP", "EUR/GBP"),
     ("🇪🇺/🇯🇵 EUR/JPY", "EUR/JPY"),
-    ("🇬🇧/🇯🇵 GBP/JPY", "GBP/JPY"),
+    ("🇬🇧/🇯🇵 GBP/JPY", "GBPJPY=X"),
 
     # --- السلع والمعادن (Commodities) ---
     ("🥇 Gold (الذهب)", "XAU/USD"),
@@ -55,6 +55,7 @@ MARKETS = [
 ]
 
 PERIODS = [
+    ("1 دقيقة", "1min"),
     ("5 دقائق", "5min"),
     ("15 دقيقة", "15min"),
     ("30 دقيقة", "30min"),
