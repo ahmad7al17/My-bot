@@ -96,6 +96,8 @@ PERIODS = [
     ("3 دقائق", "3min"),
     ("5 دقائق", "5min"),
     ("15 دقيقة", "15min"),
+    ("30 دقيقة", "30min"),
+    ("ساعة", "1h"),
 ]
 
 UNSUPPORTED_PERIODS = {"30sec", "45sec"}
@@ -109,7 +111,7 @@ def parse_datetime(value):
     return dt.replace(tzinfo=timezone.utc)
 
 
-def get_live_data(symbol, interval, outputsize=250):
+def get_live_data(symbol, interval, outputsize=300):
     cache_key = (symbol, interval, outputsize)
     now = time.time()
 
@@ -176,7 +178,7 @@ def get_live_data(symbol, interval, outputsize=250):
     if candles:
         candles = candles[:-1]
 
-    if len(candles) < 60:
+    if len(candles) < 50:
         raise ValueError(
             "البيانات المكتملة غير كافية. جرّب لاحقًا "
             "أو تحقق من تغطية الرمز."
@@ -192,7 +194,7 @@ def get_live_data(symbol, interval, outputsize=250):
 
 
 # =========================================================
-# 5. إنشاء فريمات الدقيقتين والثلاث دقائق
+# 5. إنشاء فريمات التجميع (2د، 3د)
 # =========================================================
 
 def aggregate_candles(candles, minutes):
@@ -235,7 +237,7 @@ def aggregate_candles(candles, minutes):
             "close": group[-1]["close"],
         })
 
-    if len(result) < 55:
+    if len(result) < 45:
         raise ValueError(
             "لا توجد شموع مجمعة مكتملة كافية. "
             "تحقق من بيانات الدقيقة."
@@ -364,7 +366,7 @@ def analyze(symbol, period):
         candles = aggregate_candles(base, 2)
     elif period == "3min":
         candles = aggregate_candles(base, 3)
-    elif period in ("5min", "15min"):
+    elif period in ("5min", "15min", "30min", "1h"):
         candles = get_live_data(symbol, period)
     else:
         raise ValueError("الفريم غير معروف.")
@@ -552,15 +554,26 @@ def markets_keyboard():
 
         rows.append(row)
 
-    # أزرار مجموعات الفحص الذكي للفرص (تضم كل مجموعة أسواق محددة مع فريمات 1د، 2د، 5د)
+    # أزرار الفحص السريع (1د، 2د، 5د)
     rows.append([
-        InlineKeyboardButton("🔍 فحص العملات الرئيسية (EUR, GBP, JPY)", callback_data="SCAN_GRP1")
+        InlineKeyboardButton("🔍 رئيسية [1د، 2د، 5د]", callback_data="SCAN_GRP1_125")
     ])
     rows.append([
-        InlineKeyboardButton("🔍 فحص المتقاطعات والسلع (AUD, CAD, Gold, Silver)", callback_data="SCAN_GRP2")
+        InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 5د]", callback_data="SCAN_GRP2_125")
     ])
     rows.append([
-        InlineKeyboardButton("🔍 فحص العملات الرقمية (BTC, ETH, SOL)", callback_data="SCAN_GRP3")
+        InlineKeyboardButton("🔍 رقمية [1د، 2د، 5د]", callback_data="SCAN_GRP3_125")
+    ])
+
+    # أزرار الفحص للفريمات الكبرى والمتوسطة (3د، 15د، 30د، 1 ساعة)
+    rows.append([
+        InlineKeyboardButton("⭐ رئيسية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")
+    ])
+    rows.append([
+        InlineKeyboardButton("⭐ سلع ومتقاطعات [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")
+    ])
+    rows.append([
+        InlineKeyboardButton("⭐ رقمية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")
     ])
 
     return InlineKeyboardMarkup(rows)
@@ -593,7 +606,7 @@ def again_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
-        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص السريع أدناه.\n"
+        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=markets_keyboard(),
     )
@@ -609,10 +622,9 @@ async def help_command(
     )
 
 
-async def execute_group_scan(query, markets_list, group_name):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) على فريمات (1 دقيقة، دقيقتان، 5 دقائق)... يرجى الانتظار قليلاً.")
+async def execute_group_scan(query, markets_list, group_name, scan_periods):
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name})... يرجى الانتظار قليلاً لمعالجة الشموع.")
     
-    scan_periods = ["1min", "2min", "5min"]
     found_signals = []
     
     for name, sym in markets_list:
@@ -621,7 +633,7 @@ async def execute_group_scan(query, markets_list, group_name):
                 res = await asyncio.to_thread(analyze, sym, per)
                 if "شراء" in res["signal"] or "بيع" in res["signal"]:
                     found_signals.append(f"• {name} [{per}]: {res['signal']}")
-                time.sleep(0.5) # فاصل زمني بسيط لمنع حظر الطلبات
+                time.sleep(0.4) # مهلة زمنية قصيرة لتجنب حظر الطلبات
             except Exception:
                 continue
                 
@@ -649,20 +661,27 @@ async def buttons(
         )
         return
 
-    # معالجة أزرار مجموعات الفحص الجديدة بفريمات (1د، 2د، 5د)
-    if query.data == "SCAN_GRP1":
-        grp_markets = [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")]
-        await execute_group_scan(query, grp_markets, "العملات الرئيسية")
+    # مجموعات فريمات (1د، 2د، 5د)
+    if query.data == "SCAN_GRP1_125":
+        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (1، 2، 5 د)", ["1min", "2min", "5min"])
+        return
+    if query.data == "SCAN_GRP2_125":
+        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")], "المتقاطعات والسلع (1، 2، 5 د)", ["1min", "2min", "5min"])
+        return
+    if query.data == "SCAN_GRP3_125":
+        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (1، 2، 5 د)", ["1min", "2min", "5min"])
         return
 
-    if query.data == "SCAN_GRP2":
-        grp_markets = [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")]
-        await execute_group_scan(query, grp_markets, "المتقاطعات والسلع")
+    # مجموعات الفريمات الكبرى والمتوسطة (3د، 15د، 30د، 1 ساعة)
+    big_periods = ["3min", "15min", "30min", "1h"]
+    if query.data == "SCAN_GRP1_BIG":
+        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (الفريمات الكبرى)", big_periods)
         return
-
-    if query.data == "SCAN_GRP3":
-        grp_markets = [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")]
-        await execute_group_scan(query, grp_markets, "العملات الرقمية")
+    if query.data == "SCAN_GRP2_BIG":
+        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")], "المتقاطعات والسلع (الفريمات الكبرى)", big_periods)
+        return
+    if query.data == "SCAN_GRP3_BIG":
+        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (الفريمات الكبرى)", big_periods)
         return
 
     if query.data.startswith("M|"):
