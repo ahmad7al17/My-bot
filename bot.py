@@ -387,7 +387,6 @@ def analyze(symbol, period):
     e12 = ema(close, 12)
     e26 = ema(close, 26)
 
-    # حماية من خطأ NoneType أثناء طرح قيم EMA الأولى
     macd_line = []
     for v12, v26 in zip(e12, e26):
         if v12 is not None and v26 is not None:
@@ -553,6 +552,11 @@ def markets_keyboard():
 
         rows.append(row)
 
+    # إضافة زر الفحص الشامل للأسواق الرئيسية لتجنب خطأ 429
+    rows.append([
+        InlineKeyboardButton("🔍 فحص الفرص النشطة (الأسواق الكبرى)", callback_data="SCAN_ACTIVE")
+    ])
+
     return InlineKeyboardMarkup(rows)
 
 
@@ -583,7 +587,7 @@ def again_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
-        "اختر السوق لتحليل الشموع والمؤشرات.\n"
+        "اختر السوق لتحليل الشموع والمؤشرات أو اضغط على فحص الفرص.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=markets_keyboard(),
     )
@@ -595,7 +599,6 @@ async def help_command(
     await update.message.reply_text(
         "/start - عرض الأسواق\n"
         "/help - المساعدة\n\n"
-        "الفريمات القصيرة تتطلب بيانات مكتملة.\n"
         "فريمَا 30 و45 ثانية غير مفعّلين مع مصدر البيانات الحالي."
     )
 
@@ -610,6 +613,37 @@ async def buttons(
         await query.edit_message_text(
             "📊 اختر السوق:",
             reply_markup=markets_keyboard(),
+        )
+        return
+
+    # ميزة الفحص الذكي للفرص النشطة لتجنب حظر Rate Limit
+    if query.data == "SCAN_ACTIVE":
+        await query.edit_message_text("🔍 جاري فحص أهم الأسواق (EUR/USD, GBP/USD, الذهب، البيتكوين) على الفريمات المتاحة...")
+        
+        # اختيار أهم الأسواق وأهم الفريمات لتوفير طلبات الـ API وحماية الحساب
+        scan_markets = [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("Gold - الذهب", "XAU/USD"), ("Bitcoin", "BTC/USD")]
+        scan_periods = ["1min", "5min"]
+        
+        found_signals = []
+        
+        for name, sym in scan_markets:
+            for per in scan_periods:
+                try:
+                    res = await asyncio.to_thread(analyze, sym, per)
+                    if "شراء" in res["signal"] or "بيع" in res["signal"]:
+                        found_signals.append(f"• {name} ({per}): {res['signal']}")
+                    time.sleep(1) # مهلة بسيطة بين الطلبات لمنع الحظر
+                except Exception:
+                    continue
+        
+        if found_signals:
+            msg = "🟢 **الفرص المؤكدة المتاحة حالياً:**\n\n" + "\n".join(found_signals)
+        else:
+            msg = "⚪ **لا توجد فرص مستوفية لكافة الشروط الصارمة حالياً في الأسواق المفحوصة.**\nجرب فحص سوق معين يدوياً."
+            
+        await query.edit_message_text(
+            msg,
+            reply_markup=again_keyboard(),
         )
         return
 
