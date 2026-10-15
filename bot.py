@@ -20,14 +20,14 @@ from telegram.ext import (
 # =========================================================
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-TWELVE_DATA_API_KEY = os.environ.get(
-    "TWELVE_DATA_API_KEY", ""
-).strip()
+TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
+
+# معرف المحادثة لإرسال التنبيهات التلقائية
+SUBSCRIBED_CHAT_IDS = set()
 
 if not BOT_TOKEN or not TWELVE_DATA_API_KEY:
     raise RuntimeError(
-        "اضبط BOT_TOKEN و TWELVE_DATA_API_KEY "
-        "في Environment Variables قبل التشغيل."
+        "اضبط BOT_TOKEN و TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل."
     )
 
 logging.basicConfig(
@@ -40,6 +40,9 @@ API_URL = "https://api.twelvedata.com/time_series"
 CACHE_SECONDS = 15
 DATA_CACHE = {}
 CACHE_LOCK = threading.Lock()
+
+# سجِل لمنع تكرار التنبيه لنفس الإشارة بنفس الشمعة
+SENT_ALERTS = {}
 
 # =========================================================
 # 2. خادم Render
@@ -67,7 +70,7 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # =========================================================
-# 3. الأسواق
+# 3. الأسواق والفريمات
 # =========================================================
 
 MARKETS = [
@@ -101,6 +104,14 @@ PERIODS = [
 ]
 
 UNSUPPORTED_PERIODS = {"30sec", "45sec"}
+
+# الأسواق المخصصة للفحص الدائم بالتنبيهات التلقائية لتجنب الحظر
+AUTO_SCAN_MARKETS = [
+    ("EUR/USD", "EUR/USD"),
+    ("GBP/USD", "GBP/USD"),
+    ("Gold - الذهب", "XAU/USD"),
+    ("Bitcoin", "BTC/USD"),
+]
 
 # =========================================================
 # 4. جلب البيانات والتحقق منها
@@ -136,9 +147,7 @@ def get_live_data(symbol, interval, outputsize=300):
     data = response.json()
 
     if "values" not in data:
-        message = data.get(
-            "message", "لم يرجع مزود البيانات شموعًا صالحة."
-        )
+        message = data.get("message", "لم يرجع مزود البيانات شموعًا صالحة.")
         raise ValueError(str(message))
 
     candles = []
@@ -154,20 +163,13 @@ def get_live_data(symbol, interval, outputsize=300):
                 "close": float(item["close"]),
             }
 
-            if not all(
-                candle[k] > 0
-                for k in ("open", "high", "low", "close")
-            ):
+            if not all(candle[k] > 0 for k in ("open", "high", "low", "close")):
                 continue
 
-            if candle["high"] < max(
-                candle["open"], candle["close"], candle["low"]
-            ):
+            if candle["high"] < max(candle["open"], candle["close"], candle["low"]):
                 continue
 
-            if candle["low"] > min(
-                candle["open"], candle["close"], candle["high"]
-            ):
+            if candle["low"] > min(candle["open"], candle["close"], candle["high"]):
                 continue
 
             candles.append(candle)
@@ -179,53 +181,32 @@ def get_live_data(symbol, interval, outputsize=300):
         candles = candles[:-1]
 
     if len(candles) < 50:
-        raise ValueError(
-            "البيانات المكتملة غير كافية. جرّب لاحقًا "
-            "أو تحقق من تغطية الرمز."
-        )
+        raise ValueError("البيانات المكتملة غير كافية.")
 
     with CACHE_LOCK:
-        DATA_CACHE[cache_key] = {
-            "time": now,
-            "candles": candles,
-        }
+        DATA_CACHE[cache_key] = {"time": now, "candles": candles}
 
     return candles
 
-
-# =========================================================
-# 5. إنشاء فريمات التجميع (2د، 3د)
-# =========================================================
 
 def aggregate_candles(candles, minutes):
     if minutes not in (2, 3):
         raise ValueError("فريم التجميع غير مدعوم.")
 
     groups = {}
-
     for candle in candles:
         minute_epoch = int(candle["timestamp"] // 60)
         bucket = minute_epoch // minutes
         groups.setdefault(bucket, []).append(candle)
 
     result = []
-
     for bucket in sorted(groups):
-        group = sorted(
-            groups[bucket], key=lambda c: c["timestamp"]
-        )
-
+        group = sorted(groups[bucket], key=lambda c: c["timestamp"])
         if len(group) != minutes:
             continue
 
-        minute_ids = [
-            int(c["timestamp"] // 60) for c in group
-        ]
-
-        if any(
-            minute_ids[i] != minute_ids[i - 1] + 1
-            for i in range(1, len(minute_ids))
-        ):
+        minute_ids = [int(c["timestamp"] // 60) for c in group]
+        if any(minute_ids[i] != minute_ids[i - 1] + 1 for i in range(1, len(minute_ids))):
             continue
 
         result.append({
@@ -238,69 +219,44 @@ def aggregate_candles(candles, minutes):
         })
 
     if len(result) < 45:
-        raise ValueError(
-            "لا توجد شموع مجمعة مكتملة كافية. "
-            "تحقق من بيانات الدقيقة."
-        )
+        raise ValueError("لا توجد شموع مجمعة كافية.")
 
     return result
 
 
 # =========================================================
-# 6. المؤشرات الفنية
+# 5. المؤشرات الفنية
 # =========================================================
 
 def ema(values, period):
     if len(values) < period:
         raise ValueError("بيانات EMA غير كافية.")
-
     result = [None] * (period - 1)
     seed = sum(values[:period]) / period
     result.append(seed)
-
     alpha = 2.0 / (period + 1)
-
     for value in values[period:]:
-        result.append(
-            alpha * value + (1 - alpha) * result[-1]
-        )
-
+        result.append(alpha * value + (1 - alpha) * result[-1])
     return result
 
 
 def calc_rsi(values, period=14):
     if len(values) < period + 1:
         raise ValueError("بيانات RSI غير كافية.")
-
-    changes = [
-        values[i] - values[i - 1]
-        for i in range(1, len(values))
-    ]
-
+    changes = [values[i] - values[i - 1] for i in range(1, len(values))]
     gains = [max(change, 0.0) for change in changes]
     losses = [max(-change, 0.0) for change in changes]
-
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-
     for i in range(period, len(changes)):
-        avg_gain = (
-            avg_gain * (period - 1) + gains[i]
-        ) / period
-
-        avg_loss = (
-            avg_loss * (period - 1) + losses[i]
-        ) / period
-
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     if avg_gain == 0 and avg_loss == 0:
         return 50.0
-
     if avg_loss == 0:
         return 100.0
-
     if avg_gain == 0:
         return 0.0
-
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
@@ -308,55 +264,41 @@ def calc_rsi(values, period=14):
 def calc_atr(candles, period=14):
     if len(candles) < period + 1:
         raise ValueError("بيانات ATR غير كافية.")
-
     true_ranges = []
-
     for i in range(1, len(candles)):
         current = candles[i]
         previous_close = candles[i - 1]["close"]
-
         true_range = max(
             current["high"] - current["low"],
             abs(current["high"] - previous_close),
             abs(current["low"] - previous_close),
         )
         true_ranges.append(true_range)
-
     atr = sum(true_ranges[:period]) / period
-
     for value in true_ranges[period:]:
         atr = (atr * (period - 1) + value) / period
-
     return atr
 
 
 def market_trend(candles):
     close = [c["close"] for c in candles]
-
     e20 = ema(close, 20)
     e50 = ema(close, 50)
-
     last = close[-1]
-
     if last > e20[-1] > e50[-1]:
         return "صاعد"
-
     if last < e20[-1] < e50[-1]:
         return "هابط"
-
     return "محايد"
 
 
 # =========================================================
-# 7. تحليل الإشارة وتأكيد الفريم الأكبر
+# 6. تحليل الإشارة
 # =========================================================
 
 def analyze(symbol, period):
     if period in UNSUPPORTED_PERIODS:
-        raise ValueError(
-            "فريم 30 أو 45 ثانية يحتاج بيانات لحظية "
-            "أدق من الشموع المتاحة حاليًا. لم تصدر إشارة."
-        )
+        raise ValueError("فريم غير مدعوم.")
 
     base = get_live_data(symbol, "1min")
 
@@ -372,10 +314,9 @@ def analyze(symbol, period):
         raise ValueError("الفريم غير معروف.")
 
     if not candles:
-        raise ValueError("لم يتم استلام بيانات كافية لهذا الفريم.")
+        raise ValueError("بيانات غير كافية.")
 
     close = [c["close"] for c in candles]
-
     last = close[-1]
     previous = close[-2]
 
@@ -388,20 +329,12 @@ def analyze(symbol, period):
 
     e12 = ema(close, 12)
     e26 = ema(close, 26)
-
-    macd_line = []
-    for v12, v26 in zip(e12, e26):
-        if v12 is not None and v26 is not None:
-            macd_line.append(v12 - v26)
-        else:
-            macd_line.append(0.0)
-
+    macd_line = [(v12 - v26) if v12 and v26 else 0.0 for v12, v26 in zip(e12, e26)]
     macd_signal = ema(macd_line, 9)
     macd_hist = macd_line[-1] - macd_signal[-1] if macd_signal[-1] is not None else 0.0
 
     candles5 = get_live_data(symbol, "5min")
     candles15 = get_live_data(symbol, "15min")
-
     trend5 = market_trend(candles5)
     trend15 = market_trend(candles15)
 
@@ -415,8 +348,6 @@ def analyze(symbol, period):
     elif trend5 == "هابط" and trend15 == "هابط":
         sell_score += 3
         reasons.append("اتجاه 5 و15 دقيقة هابط")
-    else:
-        reasons.append("الفريمات الأكبر غير متوافقة")
 
     if last > e21[-1] and e9[-1] > e21[-1]:
         buy_score += 2
@@ -440,13 +371,8 @@ def analyze(symbol, period):
 
     if candle_range > 0:
         body_ratio = abs(body) / candle_range
-
-        lower_wick = (
-            min(candle["open"], candle["close"]) - candle["low"]
-        )
-        upper_wick = (
-            candle["high"] - max(candle["open"], candle["close"])
-        )
+        lower_wick = min(candle["open"], candle["close"]) - candle["low"]
+        upper_wick = candle["high"] - max(candle["open"], candle["close"])
 
         if body > 0 and body_ratio >= 0.55:
             buy_score += 1
@@ -526,7 +452,59 @@ def analyze(symbol, period):
         "reasons": reasons,
         "stop_reference": stop_reference,
         "target_reference": target_reference,
+        "time": candle["datetime"],
     }
+
+
+# =========================================================
+# 7. وظيفة التنبيهات التلقائية في الخلفية
+# =========================================================
+
+async def auto_market_scanner(app):
+    while True:
+        try:
+            await asyncio.sleep(300) # فحص تلقائي كل 5 دقائق
+            if not SUBSCRIBED_CHAT_IDS:
+                continue
+
+            for name, sym in AUTO_SCAN_MARKETS:
+                for period in ["5min"]:
+                    try:
+                        res = await asyncio.to_thread(analyze, sym, period)
+                        if "شراء" in res["signal"] or "بيع" in res["signal"]:
+                            alert_id = f"{sym}_{period}_{res['time']}"
+                            
+                            # تجنب تكرار التنبيه لنفس الشمعة
+                            if SENT_ALERTS.get(alert_id):
+                                continue
+                            
+                            SENT_ALERTS[alert_id] = True
+
+                            reasons_txt = "\n".join("• " + r for r in res["reasons"])
+                            msg = (
+                                f"🚨 **تنبيه فرصة جديدة تلقائية!** 🚨\n\n"
+                                f"📊 السوق: {name} ({sym})\n"
+                                f"⏱️ الفريم: 5 دقائق\n"
+                                f"🎯 الإشارة: {res['signal']}\n"
+                                f"💵 السعر الحالي: {res['price']:.6g}\n\n"
+                                f"🛑 وقف مرجعي: {res['stop_reference']:.6g}\n"
+                                f"🎯 هدف مرجعي: {res['target_reference']:.6g}\n\n"
+                                f"🔎 الأسباب:\n{reasons_txt}\n\n"
+                                f"⚠️ تحقق من شارت المنصة قبل التنفيذ."
+                            )
+
+                            for chat_id in list(SUBSCRIBED_CHAT_IDS):
+                                try:
+                                    await app.bot.send_message(chat_id=chat_id, text=msg)
+                                except Exception:
+                                    pass
+
+                        await asyncio.sleep(2) # مهلة بين الأسواق
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.error(f"Error in auto scanner: {e}")
+            await asyncio.sleep(30)
 
 
 # =========================================================
@@ -535,88 +513,49 @@ def analyze(symbol, period):
 
 def markets_keyboard():
     rows = []
-
     for i in range(0, len(MARKETS), 2):
-        row = [
-            InlineKeyboardButton(
-                MARKETS[i][0],
-                callback_data="M|" + MARKETS[i][1],
-            )
-        ]
-
+        row = [InlineKeyboardButton(MARKETS[i][0], callback_data="M|" + MARKETS[i][1])]
         if i + 1 < len(MARKETS):
-            row.append(
-                InlineKeyboardButton(
-                    MARKETS[i + 1][0],
-                    callback_data="M|" + MARKETS[i + 1][1],
-                )
-            )
-
+            row.append(InlineKeyboardButton(MARKETS[i + 1][0], callback_data="M|" + MARKETS[i + 1][1]))
         rows.append(row)
 
-    # أزرار الفحص السريع (1د، 2د، 5د)
-    rows.append([
-        InlineKeyboardButton("🔍 رئيسية [1د، 2د، 5د]", callback_data="SCAN_GRP1_125")
-    ])
-    rows.append([
-        InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 5د]", callback_data="SCAN_GRP2_125")
-    ])
-    rows.append([
-        InlineKeyboardButton("🔍 رقمية [1د، 2د، 5د]", callback_data="SCAN_GRP3_125")
-    ])
+    rows.append([InlineKeyboardButton("🔍 رئيسية [1د، 2د، 5د]", callback_data="SCAN_GRP1_125")])
+    rows.append([InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 5د]", callback_data="SCAN_GRP2_125")])
+    rows.append([InlineKeyboardButton("🔍 رقمية [1د، 2د، 5د]", callback_data="SCAN_GRP3_125")])
 
-    # أزرار الفحص للفريمات الكبرى والمتوسطة (3د، 15د، 30د، 1 ساعة)
-    rows.append([
-        InlineKeyboardButton("⭐ رئيسية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")
-    ])
-    rows.append([
-        InlineKeyboardButton("⭐ سلع ومتقاطعات [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")
-    ])
-    rows.append([
-        InlineKeyboardButton("⭐ رقمية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")
-    ])
+    rows.append([InlineKeyboardButton("⭐ رئيسية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")])
+    rows.append([InlineKeyboardButton("⭐ سلع ومتقاطعات [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")])
+    rows.append([InlineKeyboardButton("⭐ رقمية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")])
 
     return InlineKeyboardMarkup(rows)
 
 
 def period_keyboard(symbol):
-    rows = [
-        [
-            InlineKeyboardButton(
-                "⏱️ " + label,
-                callback_data=f"P|{symbol}|{period}",
-            )
-        ]
-        for label, period in PERIODS
-    ]
-
-    rows.append([
-        InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")
-    ])
-
+    rows = [[InlineKeyboardButton("⏱️ " + label, callback_data=f"P|{symbol}|{period}")] for label, period in PERIODS]
+    rows.append([InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")])
     return InlineKeyboardMarkup(rows)
 
 
 def again_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 تحليل سوق آخر", callback_data="BACK")]
-    ])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحليل سوق آخر", callback_data="BACK")]])
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    SUBSCRIBED_CHAT_IDS.add(chat_id)
+
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
         "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
+        "🔔 **ميزة التنبيهات التلقائية مفعّلة لك الآن!** سأنبهك فور اكتشاف فرصة مؤكدة.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=markets_keyboard(),
     )
 
 
-async def help_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "/start - عرض الأسواق\n"
+        "/start - عرض الأسواق وتشغيل التنبيهات\n"
         "/help - المساعدة\n\n"
         "فريمَا 30 و45 ثانية غير مفعّلين مع مصدر البيانات الحالي."
     )
@@ -624,44 +563,33 @@ async def help_command(
 
 async def execute_group_scan(query, markets_list, group_name, scan_periods):
     await query.edit_message_text(f"🔍 جاري فحص ({group_name})... يرجى الانتظار قليلاً لمعالجة الشموع.")
-    
     found_signals = []
-    
     for name, sym in markets_list:
         for per in scan_periods:
             try:
                 res = await asyncio.to_thread(analyze, sym, per)
                 if "شراء" in res["signal"] or "بيع" in res["signal"]:
                     found_signals.append(f"• {name} [{per}]: {res['signal']}")
-                time.sleep(0.4) # مهلة زمنية قصيرة لتجنب حظر الطلبات
+                time.sleep(0.4)
             except Exception:
                 continue
-                
+
     if found_signals:
         msg = f"🟢 **الفرص المتاحة في ({group_name}):**\n\n" + "\n".join(found_signals)
     else:
         msg = f"⚪ **لا توجد فرص مطابقة للشروط الصارمة حالياً في ({group_name}).**"
-        
-    await query.edit_message_text(
-        msg,
-        reply_markup=again_keyboard(),
-    )
+
+    await query.edit_message_text(msg, reply_markup=again_keyboard())
 
 
-async def buttons(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "BACK":
-        await query.edit_message_text(
-            "📊 اختر السوق:",
-            reply_markup=markets_keyboard(),
-        )
+        await query.edit_message_text("📊 اختر السوق:", reply_markup=markets_keyboard())
         return
 
-    # مجموعات فريمات (1د، 2د، 5د)
     if query.data == "SCAN_GRP1_125":
         await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (1، 2، 5 د)", ["1min", "2min", "5min"])
         return
@@ -672,7 +600,6 @@ async def buttons(
         await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (1، 2، 5 د)", ["1min", "2min", "5min"])
         return
 
-    # مجموعات الفريمات الكبرى والمتوسطة (3د، 15د، 30د، 1 ساعة)
     big_periods = ["3min", "15min", "30min", "1h"]
     if query.data == "SCAN_GRP1_BIG":
         await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (الفريمات الكبرى)", big_periods)
@@ -686,39 +613,23 @@ async def buttons(
 
     if query.data.startswith("M|"):
         symbol = query.data.split("|", 1)[1]
-        await query.edit_message_text(
-            f"السوق: {symbol}\nاختر فريم التحليل:",
-            reply_markup=period_keyboard(symbol),
-        )
+        await query.edit_message_text(f"السوق: {symbol}\nاختر فريم التحليل:", reply_markup=period_keyboard(symbol))
         return
 
     if not query.data.startswith("P|"):
         return
 
     _, symbol, period = query.data.split("|")
-
     labels = dict((value, label) for label, value in PERIODS)
 
     await query.edit_message_text("⏳ جارٍ تحليل البيانات المكتملة...")
 
     try:
         result = await asyncio.to_thread(analyze, symbol, period)
+        reasons = "\n".join("• " + reason for reason in result["reasons"])
 
-        reasons = "\n".join(
-            "• " + reason for reason in result["reasons"]
-        )
-
-        stop_text = (
-            f"{result['stop_reference']:.6g}"
-            if result["stop_reference"] is not None
-            else "لا يوجد — انتظار"
-        )
-
-        target_text = (
-            f"{result['target_reference']:.6g}"
-            if result["target_reference"] is not None
-            else "لا يوجد — انتظار"
-        )
+        stop_text = f"{result['stop_reference']:.6g}" if result["stop_reference"] is not None else "لا يوجد — انتظار"
+        target_text = f"{result['target_reference']:.6g}" if result["target_reference"] is not None else "لا يوجد — انتظار"
 
         message = (
             f"📊 السوق: {symbol}\n"
@@ -743,19 +654,14 @@ async def buttons(
             "لا توجد إشارة مضمونة الربح."
         )
 
-        await query.edit_message_text(
-            message,
-            reply_markup=again_keyboard(),
-        )
+        await query.edit_message_text(message, reply_markup=again_keyboard())
 
     except Exception as error:
         logger.exception("Analysis failed")
-
         await query.edit_message_text(
             "❌ تعذر إكمال التحليل.\n\n"
             f"السبب: {str(error)[:700]}\n\n"
-            "تحقق من رمز السوق، وحدود API، "
-            "وتوفر البيانات لهذا الفريم.",
+            "تحقق من رمز السوق، وحدود API، وتوفر البيانات لهذا الفريم.",
             reply_markup=again_keyboard(),
         )
 
@@ -764,14 +670,18 @@ async def buttons(
 # 9. التشغيل
 # =========================================================
 
+async def post_init(app):
+    asyncio.create_task(auto_market_scanner(app))
+
+
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
 
-    logger.info("Pure Stable Trading Bot started.")
+    logger.info("Pure Stable Trading Bot with Auto Scanner started.")
     app.run_polling(drop_pending_updates=True)
 
 
