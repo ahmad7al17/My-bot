@@ -552,9 +552,15 @@ def markets_keyboard():
 
         rows.append(row)
 
-    # إضافة زر الفحص الشامل للأسواق الرئيسية لتجنب خطأ 429
+    # أزرار مجموعات الفحص الذكي للفرص (تضم كل مجموعة أسواق محددة مع فريمات 1د، 2د، 5د)
     rows.append([
-        InlineKeyboardButton("🔍 فحص الفرص النشطة (الأسواق الكبرى)", callback_data="SCAN_ACTIVE")
+        InlineKeyboardButton("🔍 فحص العملات الرئيسية (EUR, GBP, JPY)", callback_data="SCAN_GRP1")
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 فحص المتقاطعات والسلع (AUD, CAD, Gold, Silver)", callback_data="SCAN_GRP2")
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 فحص العملات الرقمية (BTC, ETH, SOL)", callback_data="SCAN_GRP3")
     ])
 
     return InlineKeyboardMarkup(rows)
@@ -587,7 +593,7 @@ def again_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
-        "اختر السوق لتحليل الشموع والمؤشرات أو اضغط على فحص الفرص.\n"
+        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص السريع أدناه.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=markets_keyboard(),
     )
@@ -600,6 +606,33 @@ async def help_command(
         "/start - عرض الأسواق\n"
         "/help - المساعدة\n\n"
         "فريمَا 30 و45 ثانية غير مفعّلين مع مصدر البيانات الحالي."
+    )
+
+
+async def execute_group_scan(query, markets_list, group_name):
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) على فريمات (1 دقيقة، دقيقتان، 5 دقائق)... يرجى الانتظار قليلاً.")
+    
+    scan_periods = ["1min", "2min", "5min"]
+    found_signals = []
+    
+    for name, sym in markets_list:
+        for per in scan_periods:
+            try:
+                res = await asyncio.to_thread(analyze, sym, per)
+                if "شراء" in res["signal"] or "بيع" in res["signal"]:
+                    found_signals.append(f"• {name} [{per}]: {res['signal']}")
+                time.sleep(0.5) # فاصل زمني بسيط لمنع حظر الطلبات
+            except Exception:
+                continue
+                
+    if found_signals:
+        msg = f"🟢 **الفرص المتاحة في ({group_name}):**\n\n" + "\n".join(found_signals)
+    else:
+        msg = f"⚪ **لا توجد فرص مطابقة للشروط الصارمة حالياً في ({group_name}).**"
+        
+    await query.edit_message_text(
+        msg,
+        reply_markup=again_keyboard(),
     )
 
 
@@ -616,35 +649,20 @@ async def buttons(
         )
         return
 
-    # ميزة الفحص الذكي للفرص النشطة لتجنب حظر Rate Limit
-    if query.data == "SCAN_ACTIVE":
-        await query.edit_message_text("🔍 جاري فحص أهم الأسواق (EUR/USD, GBP/USD, الذهب، البيتكوين) على الفريمات المتاحة...")
-        
-        # اختيار أهم الأسواق وأهم الفريمات لتوفير طلبات الـ API وحماية الحساب
-        scan_markets = [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("Gold - الذهب", "XAU/USD"), ("Bitcoin", "BTC/USD")]
-        scan_periods = ["1min", "5min"]
-        
-        found_signals = []
-        
-        for name, sym in scan_markets:
-            for per in scan_periods:
-                try:
-                    res = await asyncio.to_thread(analyze, sym, per)
-                    if "شراء" in res["signal"] or "بيع" in res["signal"]:
-                        found_signals.append(f"• {name} ({per}): {res['signal']}")
-                    time.sleep(1) # مهلة بسيطة بين الطلبات لمنع الحظر
-                except Exception:
-                    continue
-        
-        if found_signals:
-            msg = "🟢 **الفرص المؤكدة المتاحة حالياً:**\n\n" + "\n".join(found_signals)
-        else:
-            msg = "⚪ **لا توجد فرص مستوفية لكافة الشروط الصارمة حالياً في الأسواق المفحوصة.**\nجرب فحص سوق معين يدوياً."
-            
-        await query.edit_message_text(
-            msg,
-            reply_markup=again_keyboard(),
-        )
+    # معالجة أزرار مجموعات الفحص الجديدة بفريمات (1د، 2د، 5د)
+    if query.data == "SCAN_GRP1":
+        grp_markets = [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")]
+        await execute_group_scan(query, grp_markets, "العملات الرئيسية")
+        return
+
+    if query.data == "SCAN_GRP2":
+        grp_markets = [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")]
+        await execute_group_scan(query, grp_markets, "المتقاطعات والسلع")
+        return
+
+    if query.data == "SCAN_GRP3":
+        grp_markets = [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")]
+        await execute_group_scan(query, grp_markets, "العملات الرقمية")
         return
 
     if query.data.startswith("M|"):
