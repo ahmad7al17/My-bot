@@ -19,15 +19,16 @@ from telegram.ext import (
 # 1. إعدادات التشغيل والأمان
 # =========================================================
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+# استخدام التوكن الجديد المباشر
+BOT_TOKEN = "8979590448:AAFR7FM_LofcR4XsYBKZ1C7PUsruCGOFbF0"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
 
 # معرف المحادثة لإرسال التنبيهات التلقائية
 SUBSCRIBED_CHAT_IDS = set()
 
-if not BOT_TOKEN or not TWELVE_DATA_API_KEY:
+if not TWELVE_DATA_API_KEY:
     raise RuntimeError(
-        "اضبط BOT_TOKEN و TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل."
+        "اضبط TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل."
     )
 
 logging.basicConfig(
@@ -683,7 +684,6 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
 
-    # ربط دالة البدء بالطريقة الصحيحة لتجنب انهيار مهام الخلفية
     app.post_init = on_startup
 
     logger.info("Pure Stable Trading Bot with Auto Scanner started.")
