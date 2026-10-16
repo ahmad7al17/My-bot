@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("PureStableBot")
 
 API_URL = "https://api.twelvedata.com/time_series"
-CACHE_SECONDS = 15
+CACHE_SECONDS = 30
 DATA_CACHE = {}
 CACHE_LOCK = threading.Lock()
 
@@ -100,7 +100,7 @@ PERIODS = [
 UNSUPPORTED_PERIODS = {"30sec", "45sec"}
 
 # =========================================================
-# 4. جلب البيانات والتحقق منها
+# 4. جلب البيانات والتحقق منها (مع فاصل زمني لمنع 429)
 # =========================================================
 
 def parse_datetime(value):
@@ -116,6 +116,9 @@ def get_live_data(symbol, interval, outputsize=300):
         cached = DATA_CACHE.get(cache_key)
         if cached and now - cached["time"] < CACHE_SECONDS:
             return cached["candles"]
+
+    # إضافة فاصل زمني بسيط لمنع الضغط اللحظي وتجاوز الحد الأقصى
+    time.sleep(1.2)
 
     response = requests.get(
         API_URL,
@@ -501,7 +504,7 @@ async def execute_group_scan(query, markets_list, group_name, scan_periods):
                 res = await asyncio.to_thread(analyze, sym, per)
                 if "شراء" in res["signal"] or "بيع" in res["signal"]:
                     found_signals.append(f"• {name} [{per}]: {res['signal']}")
-                time.sleep(0.4)
+                time.sleep(0.5)
             except Exception:
                 continue
 
