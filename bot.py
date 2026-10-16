@@ -19,12 +19,8 @@ from telegram.ext import (
 # 1. إعدادات التشغيل والأمان
 # =========================================================
 
-# استخدام التوكن الجديد المباشر
 BOT_TOKEN = "8979590448:AAFR7FM_LofcR4XsYBKZ1C7PUsruCGOFbF0"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
-
-# معرف المحادثة لإرسال التنبيهات التلقائية
-SUBSCRIBED_CHAT_IDS = set()
 
 if not TWELVE_DATA_API_KEY:
     raise RuntimeError(
@@ -41,9 +37,6 @@ API_URL = "https://api.twelvedata.com/time_series"
 CACHE_SECONDS = 15
 DATA_CACHE = {}
 CACHE_LOCK = threading.Lock()
-
-# سجِل لمنع تكرار التنبيه لنفس الإشارة بنفس الشمعة
-SENT_ALERTS = {}
 
 # =========================================================
 # 2. خادم Render
@@ -105,14 +98,6 @@ PERIODS = [
 ]
 
 UNSUPPORTED_PERIODS = {"30sec", "45sec"}
-
-# الأسواق المخصصة للفحص الدائم بالتنبيهات التلقائية لتجنب الحظر
-AUTO_SCAN_MARKETS = [
-    ("EUR/USD", "EUR/USD"),
-    ("GBP/USD", "GBP/USD"),
-    ("Gold - الذهب", "XAU/USD"),
-    ("Bitcoin", "BTC/USD"),
-]
 
 # =========================================================
 # 4. جلب البيانات والتحقق منها
@@ -458,58 +443,7 @@ def analyze(symbol, period):
 
 
 # =========================================================
-# 7. وظيفة التنبيهات التلقائية في الخلفية
-# =========================================================
-
-async def auto_market_scanner(app):
-    while True:
-        try:
-            await asyncio.sleep(300) # فحص تلقائي كل 5 دقائق
-            if not SUBSCRIBED_CHAT_IDS:
-                continue
-
-            for name, sym in AUTO_SCAN_MARKETS:
-                for period in ["5min"]:
-                    try:
-                        res = await asyncio.to_thread(analyze, sym, period)
-                        if "شراء" in res["signal"] or "بيع" in res["signal"]:
-                            alert_id = f"{sym}_{period}_{res['time']}"
-                            
-                            # تجنب تكرار التنبيه لنفس الشمعة
-                            if SENT_ALERTS.get(alert_id):
-                                continue
-                            
-                            SENT_ALERTS[alert_id] = True
-
-                            reasons_txt = "\n".join("• " + r for r in res["reasons"])
-                            msg = (
-                                f"🚨 **تنبيه فرصة جديدة تلقائية!** 🚨\n\n"
-                                f"📊 السوق: {name} ({sym})\n"
-                                f"⏱️ الفريم: 5 دقائق\n"
-                                f"🎯 الإشارة: {res['signal']}\n"
-                                f"💵 السعر الحالي: {res['price']:.6g}\n\n"
-                                f"🛑 وقف مرجعي: {res['stop_reference']:.6g}\n"
-                                f"🎯 هدف مرجعي: {res['target_reference']:.6g}\n\n"
-                                f"🔎 الأسباب:\n{reasons_txt}\n\n"
-                                f"⚠️ تحقق من شارت المنصة قبل التنفيذ."
-                            )
-
-                            for chat_id in list(SUBSCRIBED_CHAT_IDS):
-                                try:
-                                    await app.bot.send_message(chat_id=chat_id, text=msg)
-                                except Exception:
-                                    pass
-
-                        await asyncio.sleep(2) # مهلة بين الأسواق
-                    except Exception:
-                        continue
-        except Exception as e:
-            logger.error(f"Error in auto scanner: {e}")
-            await asyncio.sleep(30)
-
-
-# =========================================================
-# 8. واجهة تيليجرام
+# 7. واجهة تيليجرام
 # =========================================================
 
 def markets_keyboard():
@@ -542,13 +476,9 @@ def again_keyboard():
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    SUBSCRIBED_CHAT_IDS.add(chat_id)
-
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
         "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
-        "🔔 **ميزة التنبيهات التلقائية مفعّلة لك الآن!** سأنبهك فور اكتشاف فرصة مؤكدة.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=markets_keyboard(),
     )
@@ -556,7 +486,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "/start - عرض الأسواق وتشغيل التنبيهات\n"
+        "/start - عرض الأسواق\n"
         "/help - المساعدة\n\n"
         "فريمَا 30 و45 ثانية غير مفعّلين مع مصدر البيانات الحالي."
     )
@@ -668,14 +598,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# 9. التشغيل
+# 8. التشغيل
 # =========================================================
-
-async def on_startup(application):
-    """بدء مهمة الخلفية للتنبيهات التلقائية"""
-    asyncio.create_task(auto_market_scanner(application))
-    logger.info("Auto market scanner task started successfully.")
-
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -684,9 +608,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
 
-    app.post_init = on_startup
-
-    logger.info("Pure Stable Trading Bot with Auto Scanner started.")
+    logger.info("Pure Stable Trading Bot started.")
     app.run_polling(drop_pending_updates=True)
 
 
