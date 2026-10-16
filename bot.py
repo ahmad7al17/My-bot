@@ -670,16 +670,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 9. التشغيل
 # =========================================================
 
-async def post_init(app):
-    asyncio.create_task(auto_market_scanner(app))
+async def on_startup(application):
+    """بدء مهمة الخلفية للتنبيهات التلقائية"""
+    asyncio.create_task(auto_market_scanner(application))
+    logger.info("Auto market scanner task started successfully.")
 
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
+
+    # ربط دالة البدء بالطريقة الصحيحة لتجنب انهيار مهام الخلفية
+    app.post_init = on_startup
 
     logger.info("Pure Stable Trading Bot with Auto Scanner started.")
     app.run_polling(drop_pending_updates=True)
