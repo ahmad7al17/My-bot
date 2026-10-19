@@ -3,7 +3,7 @@ import time
 import threading
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import requests
@@ -99,6 +99,17 @@ PERIODS = [
 
 UNSUPPORTED_PERIODS = {"30sec", "45sec"}
 
+# خريطة حساب المدة بالدقائق من أصل الفريم
+PERIOD_MINUTES_MAP = {
+    "1min": 1,
+    "2min": 2,
+    "3min": 3,
+    "5min": 5,
+    "15min": 15,
+    "30min": 30,
+    "1h": 60,
+}
+
 # =========================================================
 # 4. جلب البيانات والتحقق منها (مع فاصل زمني لمنع 429)
 # =========================================================
@@ -117,7 +128,7 @@ def get_live_data(symbol, interval, outputsize=300):
         if cached and now - cached["time"] < CACHE_SECONDS:
             return cached["candles"]
 
-    # إضافة فاصل زمني بسيط لمنع الضغط اللحظي وتجاوز الحد الأقصى
+    # فاصل زمني بين الطلبات
     time.sleep(1.2)
 
     response = requests.get(
@@ -410,10 +421,13 @@ def analyze(symbol, period):
 
     if buy_allowed:
         signal = "🟢 شراء محتمل — بعد التحقق"
+        signal_type = "BUY"
     elif sell_allowed:
         signal = "🔴 بيع محتمل — بعد التحقق"
+        signal_type = "SELL"
     else:
         signal = "⚪ انتظار — لا يوجد توافق كافٍ"
+        signal_type = "WAIT"
 
     if buy_allowed:
         stop_reference = last - 1.5 * atr
@@ -424,6 +438,22 @@ def analyze(symbol, period):
     else:
         stop_reference = None
         target_reference = None
+
+    # حساب التوقيت بدقة بالاعتماد على الفريم والتوقيت المحلي (GMT+3)
+    dt_utc = parse_datetime(candle["datetime"])
+    dt_local = dt_utc + timedelta(hours=3) # تحويل لتوقيت مكة المكرمة
+
+    duration_min = PERIOD_MINUTES_MAP.get(period, 5)
+    close_time = dt_local + timedelta(minutes=duration_min)
+
+    # تنسيق الوقت ليكون مثل: 9:22 م
+    def format_arabic_time(dt_obj):
+        time_str = dt_obj.strftime("%I:%M").lstrip("0")
+        period_str = "ص" if dt_obj.strftime("%p") == "AM" else "م"
+        return f"{time_str} {period_str}"
+
+    entry_time_str = format_arabic_time(dt_local)
+    close_time_str = format_arabic_time(close_time)
 
     return {
         "price": last,
@@ -438,6 +468,10 @@ def analyze(symbol, period):
         "buy_score": buy_score,
         "sell_score": sell_score,
         "signal": signal,
+        "signal_type": signal_type,
+        "entry_time": entry_time_str,
+        "close_time": close_time_str,
+        "duration": duration_min,
         "reasons": reasons,
         "stop_reference": stop_reference,
         "target_reference": target_reference,
@@ -502,14 +536,28 @@ async def execute_group_scan(query, markets_list, group_name, scan_periods):
         for per in scan_periods:
             try:
                 res = await asyncio.to_thread(analyze, sym, per)
-                if "شراء" in res["signal"] or "بيع" in res["signal"]:
-                    found_signals.append(f"• {name} [{per}]: {res['signal']}")
+                if res["signal_type"] == "BUY":
+                    found_signals.append(
+                        f"🟢🟢🟢 شراء ⬆️ صعود\n"
+                        f"📊 {name} [{per}]\n"
+                        f"⏰ الدخول      {res['entry_time']}\n"
+                        f"⏳ المدة       {res['duration']} دقائق\n"
+                        f"⌛ الإغلاق     {res['close_time']}\n"
+                    )
+                elif res["signal_type"] == "SELL":
+                    found_signals.append(
+                        f"🔴🔴🔴 بيع ⬇️ هبوط\n"
+                        f"📊 {name} [{per}]\n"
+                        f"⏰ الدخول      {res['entry_time']}\n"
+                        f"⏳ المدة       {res['duration']} دقائق\n"
+                        f"⌛ الإغلاق     {res['close_time']}\n"
+                    )
                 time.sleep(0.5)
             except Exception:
                 continue
 
     if found_signals:
-        msg = f"🟢 **الفرص المتاحة في ({group_name}):**\n\n" + "\n".join(found_signals)
+        msg = f"🟢 **الفرص المتاحة في ({group_name}):**\n\n" + "\n─────────────────\n".join(found_signals)
     else:
         msg = f"⚪ **لا توجد فرص مطابقة للشروط الصارمة حالياً في ({group_name}).**"
 
@@ -565,7 +613,28 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stop_text = f"{result['stop_reference']:.6g}" if result["stop_reference"] is not None else "لا يوجد — انتظار"
         target_text = f"{result['target_reference']:.6g}" if result["target_reference"] is not None else "لا يوجد — انتظار"
 
+        # إعداد رأس التوصية التوقيتية
+        if result["signal_type"] == "BUY":
+            timing_header = (
+                f"🟢🟢🟢 شراء ⬆️ صعود\n"
+                f"⏰  الدخول       {result['entry_time']}\n"
+                f"⏳  المدة        {result['duration']} دقائق\n"
+                f"⌛  الإغلاق      {result['close_time']}\n"
+                f"─────────────────\n"
+            )
+        elif result["signal_type"] == "SELL":
+            timing_header = (
+                f"🔴🔴🔴 بيع ⬇️ هبوط\n"
+                f"⏰  الدخول       {result['entry_time']}\n"
+                f"⏳  المدة        {result['duration']} دقائق\n"
+                f"⌛  الإغلاق      {result['close_time']}\n"
+                f"─────────────────\n"
+            )
+        else:
+            timing_header = ""
+
         message = (
+            f"{timing_header}"
             f"📊 السوق: {symbol}\n"
             f"⏱️ الفريم: {labels.get(period, period)}\n\n"
             f"💵 آخر إغلاق مكتمل: {result['price']:.6g}\n"
