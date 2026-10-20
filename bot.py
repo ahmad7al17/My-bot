@@ -91,6 +91,7 @@ PERIODS = [
     ("دقيقة", "1min"),
     ("دقيقتان", "2min"),
     ("3 دقائق", "3min"),
+    ("4 دقائق", "4min"),
     ("5 دقائق", "5min"),
     ("15 دقيقة", "15min"),
     ("30 دقيقة", "30min"),
@@ -103,6 +104,7 @@ PERIOD_MINUTES_MAP = {
     "1min": 1,
     "2min": 2,
     "3min": 3,
+    "4min": 4,
     "5min": 5,
     "15min": 15,
     "30min": 30,
@@ -188,7 +190,7 @@ def get_live_data(symbol, interval, outputsize=300):
 
 
 def aggregate_candles(candles, minutes):
-    if minutes not in (2, 3):
+    if minutes not in (2, 3, 4):
         raise ValueError("فريم التجميع غير مدعوم.")
 
     groups = {}
@@ -306,6 +308,8 @@ def analyze(symbol, period):
         candles = aggregate_candles(base, 2)
     elif period == "3min":
         candles = aggregate_candles(base, 3)
+    elif period == "4min":
+        candles = aggregate_candles(base, 4)
     elif period in ("5min", "15min", "30min", "1h"):
         candles = get_live_data(symbol, period)
     else:
@@ -437,13 +441,12 @@ def analyze(symbol, period):
         stop_reference = None
         target_reference = None
 
-    # --- حساب الوقت المتبقي للشمعة اللحظية (توقيت مكة GMT+3) ---
+    # --- حساب الوقت المتبقي للشمعة الحالية (توقيت مكة GMT+3) ---
     now_utc = datetime.now(timezone.utc)
     now_local = now_utc + timedelta(hours=3)
 
     duration_min = PERIOD_MINUTES_MAP.get(period, 5)
     
-    # حساب الشمعة الحالية التي تجري الآن
     current_minute = now_local.minute
     minute_bucket = (current_minute // duration_min) * duration_min
     candle_start_time = now_local.replace(minute=minute_bucket, second=0, microsecond=0)
@@ -500,13 +503,15 @@ def markets_keyboard():
             row.append(InlineKeyboardButton(MARKETS[i + 1][0], callback_data="M|" + MARKETS[i + 1][1]))
         rows.append(row)
 
-    rows.append([InlineKeyboardButton("🔍 رئيسية [1د، 2د، 5د]", callback_data="SCAN_GRP1_125")])
-    rows.append([InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 5د]", callback_data="SCAN_GRP2_125")])
-    rows.append([InlineKeyboardButton("🔍 رقمية [1د، 2د، 5د]", callback_data="SCAN_GRP3_125")])
+    # التعديل بناءً على طلبك: فريمات الفحص السريع (1، 2، 3، 4 دقائق)
+    rows.append([InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP1_1234")])
+    rows.append([InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP2_1234")])
+    rows.append([InlineKeyboardButton("🔍 رقمية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP3_1234")])
 
-    rows.append([InlineKeyboardButton("⭐ رئيسية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")])
-    rows.append([InlineKeyboardButton("⭐ سلع ومتقاطعات [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")])
-    rows.append([InlineKeyboardButton("⭐ رقمية [3د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")])
+    # التعديل بناءً على طلبك: فريمات الفحص الكبرى (حذف 3د وإضافة 5د مكانها)
+    rows.append([InlineKeyboardButton("⭐ رئيسية [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")])
+    rows.append([InlineKeyboardButton("⭐ سلع ومتقاطعات [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")])
+    rows.append([InlineKeyboardButton("⭐ رقمية [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")])
 
     return InlineKeyboardMarkup(rows)
 
@@ -549,17 +554,19 @@ async def execute_group_scan(query, markets_list, group_name, scan_periods):
                     found_signals.append(
                         f"🟢🟢🟢 شراء ⬆️ صعود\n"
                         f"📊 {name} [{per}]\n"
-                        f"⏰ بداية الشمعة: {res['entry_time']}\n"
-                        f"⏳ الوقت المتبقي للإغلاق: {res['time_remaining']}\n"
-                        f"⌛ الإغلاق: {res['close_time']}\n"
+                        f"⏰  بدء الشمعة    {res['entry_time']}\n"
+                        f"⏱️  المنقضي      {res['time_elapsed']}\n"
+                        f"⏳  المتبقي       {res['time_remaining']}\n"
+                        f"⌛  الإغلاق      {res['close_time']}\n"
                     )
                 elif res["signal_type"] == "SELL":
                     found_signals.append(
                         f"🔴🔴🔴 بيع ⬇️ هبوط\n"
                         f"📊 {name} [{per}]\n"
-                        f"⏰ بداية الشمعة: {res['entry_time']}\n"
-                        f"⏳ الوقت المتبقي للإغلاق: {res['time_remaining']}\n"
-                        f"⌛ الإغلاق: {res['close_time']}\n"
+                        f"⏰  بدء الشمعة    {res['entry_time']}\n"
+                        f"⏱️  المنقضي      {res['time_elapsed']}\n"
+                        f"⏳  المتبقي       {res['time_remaining']}\n"
+                        f"⌛  الإغلاق      {res['close_time']}\n"
                     )
                 time.sleep(0.5)
             except Exception:
@@ -581,17 +588,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📊 اختر السوق:", reply_markup=markets_keyboard())
         return
 
-    if query.data == "SCAN_GRP1_125":
-        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (1، 2، 5 د)", ["1min", "2min", "5min"])
+    # الفريمات الجديدة: 1، 2، 3، 4 دقائق
+    scan_periods_1234 = ["1min", "2min", "3min", "4min"]
+    if query.data == "SCAN_GRP1_1234":
+        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (1، 2، 3، 4 د)", scan_periods_1234)
         return
-    if query.data == "SCAN_GRP2_125":
-        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")], "المتقاطعات والسلع (1، 2، 5 د)", ["1min", "2min", "5min"])
+    if query.data == "SCAN_GRP2_1234":
+        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")], "المتقاطعات والسلع (1، 2، 3، 4 د)", scan_periods_1234)
         return
-    if query.data == "SCAN_GRP3_125":
-        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (1، 2، 5 د)", ["1min", "2min", "5min"])
+    if query.data == "SCAN_GRP3_1234":
+        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (1، 2، 3، 4 د)", scan_periods_1234)
         return
 
-    big_periods = ["3min", "15min", "30min", "1h"]
+    # الفريمات الكبرى الجديدة (حذف 3د وإضافة 5د مكانها)
+    big_periods = ["5min", "15min", "30min", "1h"]
     if query.data == "SCAN_GRP1_BIG":
         await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (الفريمات الكبرى)", big_periods)
         return
