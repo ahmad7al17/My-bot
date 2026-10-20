@@ -99,7 +99,6 @@ PERIODS = [
 
 UNSUPPORTED_PERIODS = {"30sec", "45sec"}
 
-# خريطة حساب المدة بالدقائق من أصل الفريم
 PERIOD_MINUTES_MAP = {
     "1min": 1,
     "2min": 2,
@@ -128,7 +127,6 @@ def get_live_data(symbol, interval, outputsize=300):
         if cached and now - cached["time"] < CACHE_SECONDS:
             return cached["candles"]
 
-    # فاصل زمني بين الطلبات
     time.sleep(1.2)
 
     response = requests.get(
@@ -293,7 +291,7 @@ def market_trend(candles):
 
 
 # =========================================================
-# 6. تحليل الإشارة
+# 6. تحليل الإشارة وحساب الوقت المتبقي للشمعة الحالية
 # =========================================================
 
 def analyze(symbol, period):
@@ -439,21 +437,30 @@ def analyze(symbol, period):
         stop_reference = None
         target_reference = None
 
-    # حساب التوقيت بدقة بالاعتماد على الفريم والتوقيت المحلي (GMT+3)
-    dt_utc = parse_datetime(candle["datetime"])
-    dt_local = dt_utc + timedelta(hours=3) # تحويل لتوقيت مكة المكرمة
+    # --- حساب الوقت المتبقي للشمعة اللحظية (توقيت مكة GMT+3) ---
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc + timedelta(hours=3)
 
     duration_min = PERIOD_MINUTES_MAP.get(period, 5)
-    close_time = dt_local + timedelta(minutes=duration_min)
+    
+    # حساب الشمعة الحالية التي تجري الآن
+    current_minute = now_local.minute
+    minute_bucket = (current_minute // duration_min) * duration_min
+    candle_start_time = now_local.replace(minute=minute_bucket, second=0, microsecond=0)
+    candle_end_time = candle_start_time + timedelta(minutes=duration_min)
 
-    # تنسيق الوقت ليكون مثل: 9:22 م
+    time_remaining_sec = max(0, int((candle_end_time - now_local).total_seconds()))
+    rem_min = time_remaining_sec // 60
+    rem_sec = time_remaining_sec % 60
+
+    elapsed_sec = (duration_min * 60) - time_remaining_sec
+    ela_min = elapsed_sec // 60
+    ela_sec = elapsed_sec % 60
+
     def format_arabic_time(dt_obj):
         time_str = dt_obj.strftime("%I:%M").lstrip("0")
         period_str = "ص" if dt_obj.strftime("%p") == "AM" else "م"
         return f"{time_str} {period_str}"
-
-    entry_time_str = format_arabic_time(dt_local)
-    close_time_str = format_arabic_time(close_time)
 
     return {
         "price": last,
@@ -469,9 +476,11 @@ def analyze(symbol, period):
         "sell_score": sell_score,
         "signal": signal,
         "signal_type": signal_type,
-        "entry_time": entry_time_str,
-        "close_time": close_time_str,
+        "entry_time": format_arabic_time(candle_start_time),
+        "close_time": format_arabic_time(candle_end_time),
         "duration": duration_min,
+        "time_remaining": f"{rem_min} دقيقة و {rem_sec} ثانية" if rem_min > 0 else f"{rem_sec} ثانية",
+        "time_elapsed": f"{ela_min} دقيقة و {ela_sec} ثانية" if ela_min > 0 else f"{ela_sec} ثانية",
         "reasons": reasons,
         "stop_reference": stop_reference,
         "target_reference": target_reference,
@@ -540,17 +549,17 @@ async def execute_group_scan(query, markets_list, group_name, scan_periods):
                     found_signals.append(
                         f"🟢🟢🟢 شراء ⬆️ صعود\n"
                         f"📊 {name} [{per}]\n"
-                        f"⏰ الدخول      {res['entry_time']}\n"
-                        f"⏳ المدة       {res['duration']} دقائق\n"
-                        f"⌛ الإغلاق     {res['close_time']}\n"
+                        f"⏰ بداية الشمعة: {res['entry_time']}\n"
+                        f"⏳ الوقت المتبقي للإغلاق: {res['time_remaining']}\n"
+                        f"⌛ الإغلاق: {res['close_time']}\n"
                     )
                 elif res["signal_type"] == "SELL":
                     found_signals.append(
                         f"🔴🔴🔴 بيع ⬇️ هبوط\n"
                         f"📊 {name} [{per}]\n"
-                        f"⏰ الدخول      {res['entry_time']}\n"
-                        f"⏳ المدة       {res['duration']} دقائق\n"
-                        f"⌛ الإغلاق     {res['close_time']}\n"
+                        f"⏰ بداية الشمعة: {res['entry_time']}\n"
+                        f"⏳ الوقت المتبقي للإغلاق: {res['time_remaining']}\n"
+                        f"⌛ الإغلاق: {res['close_time']}\n"
                     )
                 time.sleep(0.5)
             except Exception:
@@ -613,20 +622,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stop_text = f"{result['stop_reference']:.6g}" if result["stop_reference"] is not None else "لا يوجد — انتظار"
         target_text = f"{result['target_reference']:.6g}" if result["target_reference"] is not None else "لا يوجد — انتظار"
 
-        # إعداد رأس التوصية التوقيتية
         if result["signal_type"] == "BUY":
             timing_header = (
                 f"🟢🟢🟢 شراء ⬆️ صعود\n"
-                f"⏰  الدخول       {result['entry_time']}\n"
-                f"⏳  المدة        {result['duration']} دقائق\n"
+                f"⏰  بدء الشمعة    {result['entry_time']}\n"
+                f"⏱️  المنقضي      {result['time_elapsed']}\n"
+                f"⏳  المتبقي       {result['time_remaining']}\n"
                 f"⌛  الإغلاق      {result['close_time']}\n"
                 f"─────────────────\n"
             )
         elif result["signal_type"] == "SELL":
             timing_header = (
                 f"🔴🔴🔴 بيع ⬇️ هبوط\n"
-                f"⏰  الدخول       {result['entry_time']}\n"
-                f"⏳  المدة        {result['duration']} دقائق\n"
+                f"⏰  بدء الشمعة    {result['entry_time']}\n"
+                f"⏱️  المنقضي      {result['time_elapsed']}\n"
+                f"⏳  المتبقي       {result['time_remaining']}\n"
                 f"⌛  الإغلاق      {result['close_time']}\n"
                 f"─────────────────\n"
             )
