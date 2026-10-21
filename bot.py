@@ -16,16 +16,17 @@ from telegram.ext import (
 )
 
 # =========================================================
-# 1. إعدادات التشغيل والأمان
+# 1. إعدادات التشغيل والأمان (قراءة التوكن من متغيرات البيئة تلقائياً)
 # =========================================================
 
-BOT_TOKEN = "8979590448:AAFR7FM_LofcR4XsYBKZ1C7PUsruCGOFbF0"
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
 
+if not BOT_TOKEN:
+    raise RuntimeError("اضبط BOT_TOKEN في Environment Variables على منصة Render قبل التشغيل.")
+
 if not TWELVE_DATA_API_KEY:
-    raise RuntimeError(
-        "اضبط TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل."
-    )
+    raise RuntimeError("اضبط TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل.")
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -441,7 +442,6 @@ def analyze(symbol, period):
         stop_reference = None
         target_reference = None
 
-    # --- حساب الوقت المتبقي للشمعة الحالية (توقيت مكة GMT+3) ---
     now_utc = datetime.now(timezone.utc)
     now_local = now_utc + timedelta(hours=3)
 
@@ -503,12 +503,10 @@ def markets_keyboard():
             row.append(InlineKeyboardButton(MARKETS[i + 1][0], callback_data="M|" + MARKETS[i + 1][1]))
         rows.append(row)
 
-    # التعديل بناءً على طلبك: فريمات الفحص السريع (1، 2، 3، 4 دقائق)
     rows.append([InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP1_1234")])
     rows.append([InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP2_1234")])
     rows.append([InlineKeyboardButton("🔍 رقمية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP3_1234")])
 
-    # التعديل بناءً على طلبك: فريمات الفحص الكبرى (حذف 3د وإضافة 5د مكانها)
     rows.append([InlineKeyboardButton("⭐ رئيسية [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")])
     rows.append([InlineKeyboardButton("⭐ سلع ومتقاطعات [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")])
     rows.append([InlineKeyboardButton("⭐ رقمية [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")])
@@ -588,7 +586,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📊 اختر السوق:", reply_markup=markets_keyboard())
         return
 
-    # الفريمات الجديدة: 1، 2، 3، 4 دقائق
     scan_periods_1234 = ["1min", "2min", "3min", "4min"]
     if query.data == "SCAN_GRP1_1234":
         await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (1، 2، 3، 4 د)", scan_periods_1234)
@@ -600,7 +597,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (1، 2، 3، 4 د)", scan_periods_1234)
         return
 
-    # الفريمات الكبرى الجديدة (حذف 3د وإضافة 5د مكانها)
     big_periods = ["5min", "15min", "30min", "1h"]
     if query.data == "SCAN_GRP1_BIG":
         await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (الفريمات الكبرى)", big_periods)
