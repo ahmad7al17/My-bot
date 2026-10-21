@@ -16,16 +16,11 @@ from telegram.ext import (
 )
 
 # =========================================================
-# 1. إعدادات التشغيل والأمان (التوكن الجديد مدمج مباشرة)
+# 1. إعدادات التشغيل والأمان
 # =========================================================
 
 BOT_TOKEN = "8456469202:AAGxK2nIjcWE-Og64RW9zUGqZg--F3SNy38"
-TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
-
-if not TWELVE_DATA_API_KEY:
-    raise RuntimeError(
-        "اضبط TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل."
-    )
+TWELVE_DATA_API_KEY = "cbc8383f864f46f29849768f049f1b5d"
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -34,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger("PureStableBot")
 
 API_URL = "https://api.twelvedata.com/time_series"
-CACHE_SECONDS = 30
+CACHE_SECONDS = 60
 DATA_CACHE = {}
 CACHE_LOCK = threading.Lock()
 
@@ -112,7 +107,7 @@ PERIOD_MINUTES_MAP = {
 }
 
 # =========================================================
-# 4. جلب البيانات والتحقق منها (مع فاصل زمني لمنع 429)
+# 4. جلب البيانات والتحقق منها (مع فاصل زمني آمن لمنع 429)
 # =========================================================
 
 def parse_datetime(value):
@@ -129,7 +124,8 @@ def get_live_data(symbol, interval, outputsize=300):
         if cached and now - cached["time"] < CACHE_SECONDS:
             return cached["candles"]
 
-    time.sleep(1.2)
+    # فاصل زمني آمن لمنع حظر الطلبات (429)
+    time.sleep(2.5)
 
     response = requests.get(
         API_URL,
@@ -143,6 +139,10 @@ def get_live_data(symbol, interval, outputsize=300):
         },
         timeout=20,
     )
+    
+    if response.status_code == 429:
+        raise ValueError("تم تجاوز حد الطلبات المسموح به (429). يرجى الانتظار قليلاً.")
+
     response.raise_for_status()
     data = response.json()
 
@@ -541,7 +541,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def execute_group_scan(query, markets_list, group_name, scan_periods):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name})... يرجى الانتظار قليلاً لمعالجة الشموع.")
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name})... يرجى الانتظار قليلاً لمعالجة الشموع بأمان.")
     found_signals = []
     for name, sym in markets_list:
         for per in scan_periods:
@@ -565,7 +565,7 @@ async def execute_group_scan(query, markets_list, group_name, scan_periods):
                         f"⏳  المتبقي       {res['time_remaining']}\n"
                         f"⌛  الإغلاق      {res['close_time']}\n"
                     )
-                time.sleep(0.5)
+                time.sleep(1.5)
             except Exception:
                 continue
 
