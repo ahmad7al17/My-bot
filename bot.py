@@ -16,17 +16,16 @@ from telegram.ext import (
 )
 
 # =========================================================
-# 1. إعدادات التشغيل والأمان (قراءة التوكن من متغيرات البيئة تلقائياً)
+# 1. إعدادات التشغيل والأمان (التوكن الجديد مدمج مباشرة)
 # =========================================================
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+BOT_TOKEN = "8456469202:AAGxK2nIjcWE-Og64RW9zUGqZg--F3SNy38"
 TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
 
-if not BOT_TOKEN:
-    raise RuntimeError("اضبط BOT_TOKEN في Environment Variables على منصة Render قبل التشغيل.")
-
 if not TWELVE_DATA_API_KEY:
-    raise RuntimeError("اضبط TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل.")
+    raise RuntimeError(
+        "اضبط TWELVE_DATA_API_KEY في Environment Variables قبل التشغيل."
+    )
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
