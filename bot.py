@@ -12,6 +12,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
+    filters,
     ContextTypes,
 )
 
@@ -107,7 +109,7 @@ PERIOD_MINUTES_MAP = {
 }
 
 # =========================================================
-# 4. جلب البيانات والتحقق منها (مع فاصل زمني آمن لمنع 429)
+# 4. جلب البيانات والتحقق منها
 # =========================================================
 
 def parse_datetime(value):
@@ -124,8 +126,7 @@ def get_live_data(symbol, interval, outputsize=300):
         if cached and now - cached["time"] < CACHE_SECONDS:
             return cached["candles"]
 
-    # فاصل زمني آمن لمنع حظر الطلبات (429)
-    time.sleep(2.5)
+    time.sleep(1.5)
 
     response = requests.get(
         API_URL,
@@ -491,7 +492,7 @@ def analyze(symbol, period):
 
 
 # =========================================================
-# 7. واجهة تيليجرام
+# 7. واجهة تيليجرام (مع اعتراض أي رسالة إضافية وإجبار الرد)
 # =========================================================
 
 def markets_keyboard():
@@ -524,6 +525,16 @@ def again_keyboard():
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Pure Stable Trading Bot\n\n"
+        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
+        "الإشارات احتمالية وليست ضمانًا للربح.",
+        reply_markup=markets_keyboard(),
+    )
+
+
+async def force_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # دالة لاعتراض أي رسالة نصية أو أمر وإرسال واجهة الأسواق مباشرة متخطية أي عائق
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
         "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
@@ -694,6 +705,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
+    # معالج إضافي لاعتراض أي رسالة نصية وإجبار الرد بالواجهة الصحيحة
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
     logger.info("Pure Stable Trading Bot started.")
     app.run_polling(drop_pending_updates=True)
