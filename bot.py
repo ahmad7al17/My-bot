@@ -61,7 +61,7 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # =========================================================
-# 3. الأسواق والفريمات
+# 3. الأسواق والفريمات الأصلية
 # =========================================================
 
 MARKETS = [
@@ -226,7 +226,7 @@ def aggregate_candles(candles, minutes):
 
 
 # =========================================================
-# 5. المؤشرات الفنية
+# 5. المؤشرات الفنية الأصلية
 # =========================================================
 
 def ema(values, period):
@@ -294,7 +294,7 @@ def market_trend(candles):
 
 
 # =========================================================
-# 6. تحليل الإشارة وحساب الوقت المتبقي للشمعة الحالية
+# 6. تحليل الإشارة الأصلي
 # =========================================================
 
 def analyze(symbol, period):
@@ -492,7 +492,7 @@ def analyze(symbol, period):
 
 
 # =========================================================
-# 7. واجهة تيليجرام (مع اعتراض أي رسالة إضافية وإجبار الرد)
+# 7. واجهة تيليجرام الأصلية
 # =========================================================
 
 def markets_keyboard():
@@ -534,7 +534,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def force_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # دالة لاعتراض أي رسالة نصية أو أمر وإرسال واجهة الأسواق مباشرة متخطية أي عائق
     await update.message.reply_text(
         "🤖 Pure Stable Trading Bot\n\n"
         "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
@@ -700,12 +699,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 
 def main():
+    try:
+        requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True")
+    except Exception:
+        pass
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
-    # معالج إضافي لاعتراض أي رسالة نصية وإجبار الرد بالواجهة الصحيحة
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
     logger.info("Pure Stable Trading Bot started.")
