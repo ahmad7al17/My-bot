@@ -21,7 +21,7 @@ from telegram.ext import (
 # 1. إعدادات التشغيل والأمان (التوكن الجديد النظيف)
 # =========================================================
 
-BOT_TOKEN = "8849941901:AAHGD5VRSY8ehHd4vsNla4G0FCgInJnM_0A"
+BOT_TOKEN = "8382243160:AAHLLZ92-oLA5F61lEigu1XYEbZ9Ekubzf8"
 TWELVE_DATA_API_KEY = "cbc8383f864f46f29849768f049f1b5d"
 
 logging.basicConfig(
@@ -712,7 +712,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
     logger.info("Pure Stable Trading Bot started.")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_polling_updates=True)
 
 
 if __name__ == "__main__":
