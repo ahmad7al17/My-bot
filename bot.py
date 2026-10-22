@@ -712,7 +712,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
     logger.info("Pure Stable Trading Bot started.")
-    app.run_polling(drop_polling_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
