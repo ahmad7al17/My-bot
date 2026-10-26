@@ -414,7 +414,7 @@ def analyze(symbol, period):
 
 
 # =========================================================
-# 7. واجهة تيليجرام بالتصميم القديم الشامل والأزرار الكاملة
+# 7. واجهة تيليجرام
 # =========================================================
 
 def markets_keyboard():
@@ -425,7 +425,6 @@ def markets_keyboard():
             row.append(InlineKeyboardButton(MARKETS[i + 1][0], callback_data="M|" + MARKETS[i + 1][1]))
         rows.append(row)
 
-    # أزرار الفحص الذكي بالشكل القديم الذي تفضله
     rows.append([InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP1_1234")])
     rows.append([InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP2_1234")])
     rows.append([InlineKeyboardButton("🔍 رقمية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP3_1234")])
@@ -449,8 +448,7 @@ def again_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 **Pro Trading Bot (نسخة احترافية بمؤشرات متقدمة)**\n\n"
-        "اختر السوق لتحليل الشموع أو استخدم أزرار الفحص الذكي الشامل أدناه.",
+        "🤖 **Pro Trading Bot**\n\nاختر السوق لتحليل الشموع أو استخدم أزرار الفحص الذكي الشامل أدناه.",
         reply_markup=markets_keyboard(),
         parse_mode="Markdown"
     )
@@ -469,7 +467,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def execute_group_scan(query, markets_list, group_name, scan_periods):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) باستخدام المؤشرات المتقدمة...")
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name})...")
     found_signals = []
     for name, sym in markets_list:
         for per in scan_periods:
@@ -576,19 +574,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 
 def main():
-    try:
-        requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True")
-    except Exception:
-        pass
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
-    logger.info("Pro Trading Bot with old layout started.")
-    app.run_polling(drop_polling_updates=True)
+    logger.info("Pro Trading Bot started successfully.")
+    app.run_polling()
 
 
 if __name__ == "__main__":
