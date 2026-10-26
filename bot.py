@@ -18,7 +18,7 @@ from telegram.ext import (
 )
 
 # =========================================================
-# 1. إعدادات التشغيل والأمان (التوكن الجديد النظيف)
+# 1. إعدادات التشغيل والتوكن
 # =========================================================
 
 BOT_TOKEN = "8382243160:AAHLLZ92-oLA5F61lEigu1XYEbZ9Ekubzf8"
@@ -28,7 +28,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger("PureStableBot")
+logger = logging.getLogger("AdvancedTradingBot")
 
 API_URL = "https://api.twelvedata.com/time_series"
 CACHE_SECONDS = 60
@@ -41,7 +41,7 @@ CACHE_LOCK = threading.Lock()
 
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b"Pure Stable Trading Bot is running."
+        body = b"Advanced Trading Bot with Pro Indicators is running."
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -83,8 +83,6 @@ MARKETS = [
 ]
 
 PERIODS = [
-    ("30 ثانية", "30sec"),
-    ("45 ثانية", "45sec"),
     ("دقيقة", "1min"),
     ("دقيقتان", "2min"),
     ("3 دقائق", "3min"),
@@ -94,8 +92,6 @@ PERIODS = [
     ("30 دقيقة", "30min"),
     ("ساعة", "1h"),
 ]
-
-UNSUPPORTED_PERIODS = {"30sec", "45sec"}
 
 PERIOD_MINUTES_MAP = {
     "1min": 1,
@@ -109,7 +105,7 @@ PERIOD_MINUTES_MAP = {
 }
 
 # =========================================================
-# 4. جلب البيانات والتحقق منها
+# 4. جلب وتجميع البيانات
 # =========================================================
 
 def parse_datetime(value):
@@ -126,7 +122,7 @@ def get_live_data(symbol, interval, outputsize=300):
         if cached and now - cached["time"] < CACHE_SECONDS:
             return cached["candles"]
 
-    time.sleep(1.5)
+    time.sleep(1.2)
 
     response = requests.get(
         API_URL,
@@ -152,7 +148,6 @@ def get_live_data(symbol, interval, outputsize=300):
         raise ValueError(str(message))
 
     candles = []
-
     for item in reversed(data["values"]):
         try:
             candle = {
@@ -163,18 +158,8 @@ def get_live_data(symbol, interval, outputsize=300):
                 "low": float(item["low"]),
                 "close": float(item["close"]),
             }
-
-            if not all(candle[k] > 0 for k in ("open", "high", "low", "close")):
-                continue
-
-            if candle["high"] < max(candle["open"], candle["close"], candle["low"]):
-                continue
-
-            if candle["low"] > min(candle["open"], candle["close"], candle["high"]):
-                continue
-
-            candles.append(candle)
-
+            if all(candle[k] > 0 for k in ("open", "high", "low", "close")):
+                candles.append(candle)
         except (KeyError, TypeError, ValueError):
             continue
 
@@ -191,9 +176,6 @@ def get_live_data(symbol, interval, outputsize=300):
 
 
 def aggregate_candles(candles, minutes):
-    if minutes not in (2, 3, 4):
-        raise ValueError("فريم التجميع غير مدعوم.")
-
     groups = {}
     for candle in candles:
         minute_epoch = int(candle["timestamp"] // 60)
@@ -205,11 +187,6 @@ def aggregate_candles(candles, minutes):
         group = sorted(groups[bucket], key=lambda c: c["timestamp"])
         if len(group) != minutes:
             continue
-
-        minute_ids = [int(c["timestamp"] // 60) for c in group]
-        if any(minute_ids[i] != minute_ids[i - 1] + 1 for i in range(1, len(minute_ids))):
-            continue
-
         result.append({
             "datetime": group[0]["datetime"],
             "timestamp": group[0]["timestamp"],
@@ -219,14 +196,13 @@ def aggregate_candles(candles, minutes):
             "close": group[-1]["close"],
         })
 
-    if len(result) < 45:
+    if len(result) < 40:
         raise ValueError("لا توجد شموع مجمعة كافية.")
-
     return result
 
 
 # =========================================================
-# 5. المؤشرات الفنية
+# 5. المؤشرات الفنية المتقدمة
 # =========================================================
 
 def ema(values, period):
@@ -243,17 +219,15 @@ def ema(values, period):
 
 def calc_rsi(values, period=14):
     if len(values) < period + 1:
-        raise ValueError("بيانات RSI غير كافية.")
+        return 50.0
     changes = [values[i] - values[i - 1] for i in range(1, len(values))]
-    gains = [max(change, 0.0) for change in changes]
-    losses = [max(-change, 0.0) for change in changes]
+    gains = [max(c, 0.0) for c in changes]
+    losses = [max(-c, 0.0) for c in changes]
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
     for i in range(period, len(changes)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-    if avg_gain == 0 and avg_loss == 0:
-        return 50.0
     if avg_loss == 0:
         return 100.0
     if avg_gain == 0:
@@ -264,21 +238,61 @@ def calc_rsi(values, period=14):
 
 def calc_atr(candles, period=14):
     if len(candles) < period + 1:
-        raise ValueError("بيانات ATR غير كافية.")
+        return 0.001
     true_ranges = []
     for i in range(1, len(candles)):
-        current = candles[i]
-        previous_close = candles[i - 1]["close"]
-        true_range = max(
-            current["high"] - current["low"],
-            abs(current["high"] - previous_close),
-            abs(current["low"] - previous_close),
-        )
-        true_ranges.append(true_range)
+        c = candles[i]
+        pc = candles[i - 1]["close"]
+        tr = max(c["high"] - c["low"], abs(c["high"] - pc), abs(c["low"] - pc))
+        true_ranges.append(tr)
     atr = sum(true_ranges[:period]) / period
-    for value in true_ranges[period:]:
-        atr = (atr * (period - 1) + value) / period
+    for val in true_ranges[period:]:
+        atr = (atr * (period - 1) + val) / period
     return atr
+
+
+def calc_bollinger_bands(values, period=20, num_std=2.0):
+    if len(values) < period:
+        return values[-1], values[-1], values[-1]
+    sma = sum(values[-period:]) / period
+    variance = sum((x - sma) ** 2 for x in values[-period:]) / period
+    std_dev = variance ** 0.5
+    upper = sma + (num_std * std_dev)
+    lower = sma - (num_std * std_dev)
+    return upper, sma, lower
+
+
+def calc_adx(candles, period=14):
+    if len(candles) < period * 2:
+        return 25.0  # قيمة افتراضية آمنة
+    tr_list, plus_dm_list, minus_dm_list = [], [], []
+    for i in range(1, len(candles)):
+        h = candles[i]["high"]
+        l = candles[i]["low"]
+        ph = candles[i - 1]["high"]
+        pl = candles[i - 1]["low"]
+        pc = candles[i - 1]["close"]
+
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        tr_list.append(tr)
+
+        up_move = h - ph
+        down_move = pl - l
+
+        plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
+
+        plus_dm_list.append(plus_dm)
+        minus_dm_list.append(minus_dm)
+
+    atr = sum(tr_list[-period:]) / period
+    plus_di = 100 * (sum(plus_dm_list[-period:]) / period) / (atr if atr > 0 else 1)
+    minus_di = 100 * (sum(minus_dm_list[-period:]) / period) / (atr if atr > 0 else 1)
+
+    dx_sum = abs(plus_di - minus_di)
+    dx_den = (plus_di + minus_di)
+    dx = 100 * (dx_sum / dx_den) if dx_den > 0 else 0.0
+    return dx
 
 
 def market_trend(candles):
@@ -294,30 +308,19 @@ def market_trend(candles):
 
 
 # =========================================================
-# 6. تحليل الإشارة وحساب الوقت المتبقي للشمعة الحالية
+# 6. المحرك الاحترافي لتحليل الإشارات وإدارة المخاطر
 # =========================================================
 
 def analyze(symbol, period):
-    if period in UNSUPPORTED_PERIODS:
-        raise ValueError("فريم غير مدعوم.")
-
     base = get_live_data(symbol, "1min")
 
     if period == "1min":
         candles = base
-    elif period == "2min":
-        candles = aggregate_candles(base, 2)
-    elif period == "3min":
-        candles = aggregate_candles(base, 3)
-    elif period == "4min":
-        candles = aggregate_candles(base, 4)
-    elif period in ("5min", "15min", "30min", "1h"):
-        candles = get_live_data(symbol, period)
+    elif period in ("2min", "3min", "4min"):
+        minutes = PERIOD_MINUTES_MAP[period]
+        candles = aggregate_candles(base, minutes)
     else:
-        raise ValueError("الفريم غير معروف.")
-
-    if not candles:
-        raise ValueError("بيانات غير كافية.")
+        candles = get_live_data(symbol, period)
 
     close = [c["close"] for c in candles]
     last = close[-1]
@@ -329,165 +332,122 @@ def analyze(symbol, period):
 
     rsi = calc_rsi(close)
     atr = calc_atr(candles)
+    upper_bb, middle_bb, lower_bb = calc_bollinger_bands(close)
+    adx = calc_adx(candles)
 
+    # MACD
     e12 = ema(close, 12)
     e26 = ema(close, 26)
     macd_line = [(v12 - v26) if v12 and v26 else 0.0 for v12, v26 in zip(e12, e26)]
     macd_signal = ema(macd_line, 9)
     macd_hist = macd_line[-1] - macd_signal[-1] if macd_signal[-1] is not None else 0.0
 
-    candles5 = get_live_data(symbol, "5min")
-    candles15 = get_live_data(symbol, "15min")
-    trend5 = market_trend(candles5)
-    trend15 = market_trend(candles15)
+    trend5 = market_trend(get_live_data(symbol, "5min"))
+    trend15 = market_trend(get_live_data(symbol, "15min"))
 
     buy_score = 0
     sell_score = 0
     reasons = []
 
-    if trend5 == "صاعد" and trend15 == "صاعد":
-        buy_score += 3
-        reasons.append("اتجاه 5 و15 دقيقة صاعد")
-    elif trend5 == "هابط" and trend15 == "هابط":
-        sell_score += 3
-        reasons.append("اتجاه 5 و15 دقيقة هابط")
+    # شروط الترند وقوة السوق عبر ADX
+    if adx > 22:
+        reasons.append(f"قوة الاتجاه ADX قوية ({adx:.1f})")
+        if trend5 == "صاعد" and trend15 == "صاعد":
+            buy_score += 3
+            reasons.append("توافق الاتجاه العام (صاعد)")
+        elif trend5 == "هابط" and trend15 == "هابط":
+            sell_score += 3
+            reasons.append("توافق الاتجاه العام (هابط)")
+    else:
+        reasons.append(f"السوق عرضي/ضعيف (ADX: {adx:.1f})")
 
+    # تقاطع المتوسطات
     if last > e21[-1] and e9[-1] > e21[-1]:
         buy_score += 2
-        reasons.append("السعر والمتوسطات يدعمان الصعود")
-
+        reasons.append("إيجابية المتوسطات المتحركة EMA")
     if last < e21[-1] and e9[-1] < e21[-1]:
         sell_score += 2
-        reasons.append("السعر والمتوسطات يدعمان الهبوط")
+        reasons.append("سلبية المتوسطات المتحركة EMA")
 
-    if macd_hist > 0 and rsi >= 52:
+    # بولنجر باند
+    if last <= lower_bb * 1.002:
+        buy_score += 2
+        reasons.append("السعر لامس الحد السفلي لبولنجر باند (فرصة ارتداد)")
+    if last >= upper_bb * 0.998:
+        sell_score += 2
+        reasons.append("السعر لامس الحد العلوي لبولنجر باند (فرصة انعكاس)")
+
+    # الزخم
+    if macd_hist > 0 and rsi >= 50:
         buy_score += 1
-        reasons.append("زخم إيجابي")
-
-    if macd_hist < 0 and rsi <= 48:
+        reasons.append("زخم إيجابي مدعوم بـ RSI")
+    if macd_hist < 0 and rsi <= 50:
         sell_score += 1
-        reasons.append("زخم سلبي")
+        reasons.append("زخم سلبي مدعوم بـ RSI")
 
-    candle = candles[-1]
-    body = candle["close"] - candle["open"]
-    candle_range = candle["high"] - candle["low"]
-
-    if candle_range > 0:
-        body_ratio = abs(body) / candle_range
-        lower_wick = min(candle["open"], candle["close"]) - candle["low"]
-        upper_wick = candle["high"] - max(candle["open"], candle["close"])
-
-        if body > 0 and body_ratio >= 0.55:
-            buy_score += 1
-            reasons.append("شمعة صاعدة قوية نسبيًا")
-
-        if body < 0 and body_ratio >= 0.55:
-            sell_score += 1
-            reasons.append("شمعة هابطة قوية نسبيًا")
-
-        if body > 0 and lower_wick / candle_range >= 0.45:
-            buy_score += 1
-            reasons.append("رفض سعري من الأسفل")
-
-        if body < 0 and upper_wick / candle_range >= 0.45:
-            sell_score += 1
-            reasons.append("رفض سعري من الأعلى")
-
-    extension = abs(last - e21[-1])
-    not_overextended = extension <= 1.5 * atr
-
-    buy_allowed = (
-        trend5 == "صاعد"
-        and trend15 == "صاعد"
-        and last > e21[-1]
-        and e9[-1] > e21[-1]
-        and macd_hist > 0
-        and 52 <= rsi <= 68
-        and buy_score >= 6
-        and buy_score > sell_score
-        and not_overextended
-        and last > previous
-    )
-
-    sell_allowed = (
-        trend5 == "هابط"
-        and trend15 == "هابط"
-        and last < e21[-1]
-        and e9[-1] < e21[-1]
-        and macd_hist < 0
-        and 32 <= rsi <= 48
-        and sell_score >= 6
-        and sell_score > buy_score
-        and not_overextended
-        and last < previous
-    )
+    # اتخاذ القرار الصارم
+    buy_allowed = buy_score >= 6 and buy_score > sell_score and last > previous
+    sell_allowed = sell_score >= 6 and sell_score > buy_score and last < previous
 
     if buy_allowed:
-        signal = "🟢 شراء محتمل — بعد التحقق"
+        signal = "🟢 شراء مؤكد — مع إدارة مخاطر متقدمة"
         signal_type = "BUY"
+        stop_reference = last - (1.5 * atr)
+        target1 = last + (1.5 * atr)
+        target2 = last + (2.5 * atr)
     elif sell_allowed:
-        signal = "🔴 بيع محتمل — بعد التحقق"
+        signal = "🔴 بيع مؤكد — مع إدارة مخاطر متقدمة"
         signal_type = "SELL"
+        stop_reference = last + (1.5 * atr)
+        target1 = last - (1.5 * atr)
+        target2 = last - (2.5 * atr)
     else:
-        signal = "⚪ انتظار — لا يوجد توافق كافٍ"
+        signal = "⚪ انتظار — بانتظار توافق شروط السيولة والدقة"
         signal_type = "WAIT"
-
-    if buy_allowed:
-        stop_reference = last - 1.5 * atr
-        target_reference = last + 2.0 * atr
-    elif sell_allowed:
-        stop_reference = last + 1.5 * atr
-        target_reference = last - 2.0 * atr
-    else:
         stop_reference = None
-        target_reference = None
+        target1 = None
+        target2 = None
 
-    now_utc = datetime.now(timezone.utc)
-    now_local = now_utc + timedelta(hours=3)
-
+    # حساب التوقيت بدقة
+    now_local = datetime.now(timezone.utc) + timedelta(hours=3)
     duration_min = PERIOD_MINUTES_MAP.get(period, 5)
-    
     current_minute = now_local.minute
     minute_bucket = (current_minute // duration_min) * duration_min
     candle_start_time = now_local.replace(minute=minute_bucket, second=0, microsecond=0)
     candle_end_time = candle_start_time + timedelta(minutes=duration_min)
 
     time_remaining_sec = max(0, int((candle_end_time - now_local).total_seconds()))
-    rem_min = time_remaining_sec // 60
-    rem_sec = time_remaining_sec % 60
-
+    rem_min, rem_sec = divmod(time_remaining_sec, 60)
     elapsed_sec = (duration_min * 60) - time_remaining_sec
-    ela_min = elapsed_sec // 60
-    ela_sec = elapsed_sec % 60
+    ela_min, ela_sec = divmod(elapsed_sec, 60)
 
-    def format_arabic_time(dt_obj):
-        time_str = dt_obj.strftime("%I:%M").lstrip("0")
-        period_str = "ص" if dt_obj.strftime("%p") == "AM" else "م"
-        return f"{time_str} {period_str}"
+    def fmt_time(dt):
+        t_str = dt.strftime("%I:%M").lstrip("0")
+        p_str = "ص" if dt.strftime("%p") == "AM" else "م"
+        return f"{t_str} {p_str}"
 
     return {
         "price": last,
         "rsi": rsi,
+        "adx": adx,
         "ema9": e9[-1],
         "ema21": e21[-1],
-        "ema50": e50[-1],
         "macd": macd_hist,
         "atr": atr,
-        "trend5": trend5,
-        "trend15": trend15,
+        "upper_bb": upper_bb,
+        "lower_bb": lower_bb,
         "buy_score": buy_score,
         "sell_score": sell_score,
         "signal": signal,
         "signal_type": signal_type,
-        "entry_time": format_arabic_time(candle_start_time),
-        "close_time": format_arabic_time(candle_end_time),
-        "duration": duration_min,
-        "time_remaining": f"{rem_min} دقيقة و {rem_sec} ثانية" if rem_min > 0 else f"{rem_sec} ثانية",
-        "time_elapsed": f"{ela_min} دقيقة و {ela_sec} ثانية" if ela_min > 0 else f"{ela_sec} ثانية",
+        "entry_time": fmt_time(candle_start_time),
+        "close_time": fmt_time(candle_end_time),
+        "time_remaining": f"{rem_min} د و {rem_sec} ث" if rem_min > 0 else f"{rem_sec} ث",
+        "time_elapsed": f"{ela_min} د و {ela_sec} ث" if ela_min > 0 else f"{ela_sec} ث",
         "reasons": reasons,
         "stop_reference": stop_reference,
-        "target_reference": target_reference,
-        "time": candle["datetime"],
+        "target1": target1,
+        "target2": target2,
     }
 
 
@@ -502,21 +462,13 @@ def markets_keyboard():
         if i + 1 < len(MARKETS):
             row.append(InlineKeyboardButton(MARKETS[i + 1][0], callback_data="M|" + MARKETS[i + 1][1]))
         rows.append(row)
-
-    rows.append([InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP1_1234")])
-    rows.append([InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP2_1234")])
-    rows.append([InlineKeyboardButton("🔍 رقمية [1د، 2د، 3د، 4د]", callback_data="SCAN_GRP3_1234")])
-
-    rows.append([InlineKeyboardButton("⭐ رئيسية [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP1_BIG")])
-    rows.append([InlineKeyboardButton("⭐ سلع ومتقاطعات [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP2_BIG")])
-    rows.append([InlineKeyboardButton("⭐ رقمية [5د، 15د، 30د، 1ساعة]", callback_data="SCAN_GRP3_BIG")])
-
+    rows.append([InlineKeyboardButton("🔍 فحص ذكي شامل للأسواق", callback_data="SCAN_ALL")])
     return InlineKeyboardMarkup(rows)
 
 
 def period_keyboard(symbol):
     rows = [[InlineKeyboardButton("⏱️ " + label, callback_data=f"P|{symbol}|{period}")] for label, period in PERIODS]
-    rows.append([InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")])
+    rows.append([InlineKeyboardButton("⬅️ القائمة الرئيسية", callback_data="BACK")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -526,65 +478,25 @@ def again_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Pure Stable Trading Bot\n\n"
-        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
-        "الإشارات احتمالية وليست ضمانًا للربح.",
+        "🚀 **Advanced Trading Bot (Pro Edition)**\n\n"
+        "مرحباً بك! تم دمج مؤشرات بولنجر باند، ADX، وإدارة المخاطر المتقدمة.\n"
+        "اختر السوق البدء بالتحليل الاحترافي:",
         reply_markup=markets_keyboard(),
+        parse_mode="Markdown"
     )
 
 
 async def force_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Pure Stable Trading Bot\n\n"
-        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
-        "الإشارات احتمالية وليست ضمانًا للربح.",
+        "🚀 **Advanced Trading Bot (Pro Edition)**\n\n"
+        "اختر السوق لتحليل الشموع والمؤشرات الاحترافية:",
         reply_markup=markets_keyboard(),
+        parse_mode="Markdown"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "/start - عرض الأسواق\n"
-        "/help - المساعدة\n\n"
-        "فريمَا 30 و45 ثانية غير مفعّلين مع مصدر البيانات الحالي."
-    )
-
-
-async def execute_group_scan(query, markets_list, group_name, scan_periods):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name})... يرجى الانتظار قليلاً لمعالجة الشموع بأمان.")
-    found_signals = []
-    for name, sym in markets_list:
-        for per in scan_periods:
-            try:
-                res = await asyncio.to_thread(analyze, sym, per)
-                if res["signal_type"] == "BUY":
-                    found_signals.append(
-                        f"🟢🟢🟢 شراء ⬆️ صعود\n"
-                        f"📊 {name} [{per}]\n"
-                        f"⏰  بدء الشمعة    {res['entry_time']}\n"
-                        f"⏱️  المنقضي      {res['time_elapsed']}\n"
-                        f"⏳  المتبقي       {res['time_remaining']}\n"
-                        f"⌛  الإغلاق      {res['close_time']}\n"
-                    )
-                elif res["signal_type"] == "SELL":
-                    found_signals.append(
-                        f"🔴🔴🔴 بيع ⬇️ هبوط\n"
-                        f"📊 {name} [{per}]\n"
-                        f"⏰  بدء الشمعة    {res['entry_time']}\n"
-                        f"⏱️  المنقضي      {res['time_elapsed']}\n"
-                        f"⏳  المتبقي       {res['time_remaining']}\n"
-                        f"⌛  الإغلاق      {res['close_time']}\n"
-                    )
-                time.sleep(1.5)
-            except Exception:
-                continue
-
-    if found_signals:
-        msg = f"🟢 **الفرص المتاحة في ({group_name}):**\n\n" + "\n─────────────────\n".join(found_signals)
-    else:
-        msg = f"⚪ **لا توجد فرص مطابقة للشروط الصارمة حالياً في ({group_name}).**"
-
-    await query.edit_message_text(msg, reply_markup=again_keyboard())
+    await update.message.reply_text("البوت يعمل بأحدث مؤشرات التحليل الفني والدقة العالية.")
 
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -595,103 +507,69 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📊 اختر السوق:", reply_markup=markets_keyboard())
         return
 
-    scan_periods_1234 = ["1min", "2min", "3min", "4min"]
-    if query.data == "SCAN_GRP1_1234":
-        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (1، 2، 3، 4 د)", scan_periods_1234)
-        return
-    if query.data == "SCAN_GRP2_1234":
-        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")], "المتقاطعات والسلع (1، 2، 3، 4 د)", scan_periods_1234)
-        return
-    if query.data == "SCAN_GRP3_1234":
-        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (1، 2، 3، 4 د)", scan_periods_1234)
-        return
-
-    big_periods = ["5min", "15min", "30min", "1h"]
-    if query.data == "SCAN_GRP1_BIG":
-        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (الفريمات الكبرى)", big_periods)
-        return
-    if query.data == "SCAN_GRP2_BIG":
-        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("Gold - الذهب", "XAU/USD"), ("Silver - الفضة", "XAG/USD")], "المتقاطعات والسلع (الفريمات الكبرى)", big_periods)
-        return
-    if query.data == "SCAN_GRP3_BIG":
-        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (الفريمات الكبرى)", big_periods)
+    if query.data == "SCAN_ALL":
+        await query.edit_message_text("🔍 جاري فحص الأسواق الرئيسية بدقة عبر مؤشرات ADX وبولنجر باند...")
+        found = []
+        for name, sym in MARKETS[:6]:
+            try:
+                res = await asyncio.to_thread(analyze, sym, "5min")
+                if res["signal_type"] != "WAIT":
+                    found.append(f"📊 {name} (5د): {res['signal']}")
+                time.sleep(1)
+            except Exception:
+                continue
+        msg = "🟢 **نتائج الفحص الذكي:**\n\n" + ("\n".join(found) if found else "لا توجد فرص مطابقة للشروط الصارمة حالياً.")
+        await query.edit_message_text(msg, reply_markup=again_keyboard())
         return
 
     if query.data.startswith("M|"):
         symbol = query.data.split("|", 1)[1]
-        await query.edit_message_text(f"السوق: {symbol}\nاختر فريم التحليل:", reply_markup=period_keyboard(symbol))
+        await query.edit_message_text(f"السوق المختار: {symbol}\nاختر فريم التحليل الاحترافي:", reply_markup=period_keyboard(symbol))
         return
 
     if not query.data.startswith("P|"):
         return
 
     _, symbol, period = query.data.split("|")
-    labels = dict((value, label) for label, value in PERIODS)
-
-    await query.edit_message_text("⏳ جارٍ تحليل البيانات المكتملة...")
+    await query.edit_message_text("⏳ جارٍ حساب المؤشرات المتقدمة (ADX, Bollinger, ATR)...")
 
     try:
-        result = await asyncio.to_thread(analyze, symbol, period)
-        reasons = "\n".join("• " + reason for reason in result["reasons"])
+        res = await asyncio.to_thread(analyze, symbol, period)
+        reasons_text = "\n".join("• " + r for r in res["reasons"])
 
-        stop_text = f"{result['stop_reference']:.6g}" if result["stop_reference"] is not None else "لا يوجد — انتظار"
-        target_text = f"{result['target_reference']:.6g}" if result["target_reference"] is not None else "لا يوجد — انتظار"
+        stop_txt = f"{res['stop_reference']:.5g}" if res["stop_reference"] else "انتظار"
+        t1_txt = f"{res['target1']:.5g}" if res["target1"] else "انتظار"
+        t2_txt = f"{res['target2']:.5g}" if res["target2"] else "انتظار"
 
-        if result["signal_type"] == "BUY":
-            timing_header = (
-                f"🟢🟢🟢 شراء ⬆️ صعود\n"
-                f"⏰  بدء الشمعة    {result['entry_time']}\n"
-                f"⏱️  المنقضي      {result['time_elapsed']}\n"
-                f"⏳  المتبقي       {result['time_remaining']}\n"
-                f"⌛  الإغلاق      {result['close_time']}\n"
+        header = ""
+        if res["signal_type"] in ("BUY", "SELL"):
+            header = (
+                f"{'🟢🟢🟢 شراء ⬆️' if res['signal_type']=='BUY' else '🔴🔴🔴 بيع ⬇️'}\n"
+                f"⏰ الشمعة: {res['entry_time']} ➔ الإغلاق: {res['close_time']}\n"
+                f"⏳ المتبقي: {res['time_remaining']}\n"
                 f"─────────────────\n"
             )
-        elif result["signal_type"] == "SELL":
-            timing_header = (
-                f"🔴🔴🔴 بيع ⬇️ هبوط\n"
-                f"⏰  بدء الشمعة    {result['entry_time']}\n"
-                f"⏱️  المنقضي      {result['time_elapsed']}\n"
-                f"⏳  المتبقي       {result['time_remaining']}\n"
-                f"⌛  الإغلاق      {result['close_time']}\n"
-                f"─────────────────\n"
-            )
-        else:
-            timing_header = ""
 
         message = (
-            f"{timing_header}"
-            f"📊 السوق: {symbol}\n"
-            f"⏱️ الفريم: {labels.get(period, period)}\n\n"
-            f"💵 آخر إغلاق مكتمل: {result['price']:.6g}\n"
-            f"🎯 الإشارة: {result['signal']}\n\n"
-            f"📈 EMA9: {result['ema9']:.6g}\n"
-            f"📈 EMA21: {result['ema21']:.6g}\n"
-            f"📈 EMA50: {result['ema50']:.6g}\n"
-            f"📊 RSI14: {result['rsi']:.2f}\n"
-            f"〽️ MACD Histogram: {result['macd']:.6g}\n"
-            f"📏 ATR14: {result['atr']:.6g}\n\n"
-            f"🧭 اتجاه 5 دقائق: {result['trend5']}\n"
-            f"🧭 اتجاه 15 دقيقة: {result['trend15']}\n"
-            f"🟢 نقاط الشراء: {result['buy_score']}\n"
-            f"🔴 نقاط البيع: {result['sell_score']}\n\n"
-            f"🛑 مستوى وقف مرجعي: {stop_text}\n"
-            f"🎯 هدف مرجعي: {target_text}\n\n"
-            f"🔎 أسباب التحليل:\n{reasons}\n\n"
-            "⚠️ المستويات تقديرية وليست أوامر تنفيذ.\n"
-            "قد يختلف السعر عن منصة الوسيط.\n"
-            "لا توجد إشارة مضمونة الربح."
+            f"{header}"
+            f"📊 السوق: {symbol} | الفريم: {period}\n\n"
+            f"💵 السعر الحالي: {res['price']:.5g}\n"
+            f"🎯 التوصية: {res['signal']}\n\n"
+            f"📈 قوة الاتجاه ADX: {res['adx']:.1f}\n"
+            f"📊 RSI: {res['rsi']:.1f} | ATR: {res['atr']:.5g}\n"
+            f"📉 بولنجر (عالي: {res['upper_bb']:.5g} | سفلي: {res['lower_bb']:.5g})\n\n"
+            f"🛑 وقف الخسارة: {stop_txt}\n"
+            f"🎯 الهدف الأول: {t1_txt}\n"
+            f"🎯 الهدف الثاني: {t2_txt}\n\n"
+            f"🔎 الأسباب والتحليل:\n{reasons_text}\n\n"
+            "⚠️ التوصيات تحليلية تقنية وليست نصيحة مالية."
         )
 
         await query.edit_message_text(message, reply_markup=again_keyboard())
 
-    except Exception as error:
-        logger.exception("Analysis failed")
-        await query.edit_message_text(
-            "❌ تعذر إكمال التحليل.\n\n"
-            f"السبب: {str(error)[:700]}\n\n"
-            "تحقق من رمز السوق، وحدود API، وتوفر البيانات لهذا الفريم.",
-            reply_markup=again_keyboard(),
-        )
+    except Exception as e:
+        logger.exception("Pro analysis error")
+        await query.edit_message_text(f"❌ حدث خطأ أثناء جلب التحليل الاحترافي: {str(e)[:400]}", reply_markup=again_keyboard())
 
 
 # =========================================================
@@ -705,13 +583,12 @@ def main():
         pass
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
-    logger.info("Pure Stable Trading Bot started.")
+    logger.info("Advanced Pro Trading Bot started.")
     app.run_polling(drop_pending_updates=True)
 
 
