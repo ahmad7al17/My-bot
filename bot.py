@@ -41,7 +41,7 @@ CACHE_LOCK = threading.Lock()
 
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b"Pro Trading Bot is running."
+        body = b"Pro Trading Bot with Reversal Detection is running."
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -209,7 +209,7 @@ def aggregate_candles(candles, minutes):
 
 
 # =========================================================
-# 5. المؤشرات المتقدمة (EMA, RSI, ATR, Bollinger, ADX)
+# 5. المؤشرات المتقدمة وفلترة الشموع الانعكاسية
 # =========================================================
 
 def ema(values, period):
@@ -298,7 +298,7 @@ def market_trend(candles):
 
 
 # =========================================================
-# 6. محرك التحليل والدقة العالية
+# 6. محرك التحليل فائق الدقة (مع رصد الشموع الانعكاسية)
 # =========================================================
 
 def analyze(symbol, period):
@@ -317,6 +317,26 @@ def analyze(symbol, period):
     close = [c["close"] for c in candles]
     last = close[-1]
     previous = close[-2]
+
+    curr_candle = candles[-1]
+    prev_candle = candles[-2]
+
+    # خصائص الشمعة الحالية لتحليل الحركة الانعكاسية (Price Action)
+    body_size = abs(curr_candle["close"] - curr_candle["open"])
+    total_range = curr_candle["high"] - curr_candle["low"]
+    upper_wick = curr_candle["high"] - max(curr_candle["open"], curr_candle["close"])
+    lower_wick = min(curr_candle["open"], curr_candle["close"]) - curr_candle["low"]
+
+    # فلتر تجنب الشموع الضئيلة (التذبذب الميت / الدوجي)
+    is_valid_body = total_range > 0 and (body_size / total_range) >= 0.35
+
+    # فحص الرفض السعري والشموع الانعكاسية (الذيول)
+    has_strong_lower_wick = total_range > 0 and (lower_wick / total_range) >= 0.45
+    has_strong_upper_wick = total_range > 0 and (upper_wick / total_range) >= 0.45
+
+    # شمعة الابتلاع (Engulfing Pattern) القوية لتأكيد الانعكاس
+    is_bullish_engulfing = (curr_candle["close"] > curr_candle["open"]) and (prev_candle["close"] < prev_candle["open"]) and (curr_candle["close"] >= prev_candle["open"])
+    is_bearish_engulfing = (curr_candle["close"] < curr_candle["open"]) and (prev_candle["close"] > prev_candle["open"]) and (curr_candle["close"] <= prev_candle["open"])
 
     e9 = ema(close, 9)
     e21 = ema(close, 21)
@@ -339,53 +359,62 @@ def analyze(symbol, period):
     sell_score = 0
     reasons = []
 
-    if adx > 20:
-        reasons.append(f"قوة اتجاه مقبولة (ADX: {adx:.1f})")
+    # فحص قوة الاتجاه الصارم
+    if adx >= 22:
+        reasons.append(فوضى أقوى (ADX: {adx:.1f}))
         if trend5 == "صاعد" and trend15 == "صاعد":
             buy_score += 3
-            reasons.append("اتجاه 5 و15 دقيقة صاعد")
+            reasons.append("توافق الاتجاه العام صعوداً")
         elif trend5 == "هابط" and trend15 == "هابط":
             sell_score += 3
-            reasons.append("اتجاه 5 و15 دقيقة هابط")
+            reasons.append("توافق الاتجاه العام هبوطاً")
+    else:
+        reasons.append(f"تذبذب عرضي ضعيف (ADX: {adx:.1f})")
 
+    # المتوسطات والزخم
     if last > e21[-1] and e9[-1] > e21[-1]:
         buy_score += 2
-        reasons.append("السعر والمتوسطات يدعمان الصعود")
+        reasons.append("دعم إيجابي من المتوسطات")
     if last < e21[-1] and e9[-1] < e21[-1]:
         sell_score += 2
-        reasons.append("السعر والمتوسطات يدعمان الهبوط")
+        reasons.append("دعم سلبي من المتوسطات")
 
-    if last <= lower_bb * 1.002:
+    # رصد الارتداد من بولنجر باند مع تأكيد الشموع الانعكاسية
+    if last <= lower_bb * 1.002 or has_strong_lower_wick or is_bullish_engulfing:
+        if is_valid_body or has_strong_lower_wick or is_bullish_engulfing:
+            buy_score += 2
+            reasons.append("رصد شمعة انعكاسية صاعدة / رفض من الدعم")
+
+    if last >= upper_bb * 0.998 or has_strong_upper_wick or is_bearish_engulfing:
+        if is_valid_body or has_strong_upper_wick or is_bearish_engulfing:
+            sell_score += 2
+            reasons.append("رصد شمعة انعكاسية هابطة / رفض من المقاومة")
+
+    if macd_hist > 0 and 48 <= rsi <= 68:
         buy_score += 1
-        reasons.append("ملامسة الحد السفلي لبولنجر باند")
-    if last >= upper_bb * 0.998:
+        reasons.append("زخم إيجابي مستقر")
+    if macd_hist < 0 and 32 <= rsi <= 52:
         sell_score += 1
-        reasons.append("ملامسة الحد العلوي لبولنجر باند")
+        reasons.append("زخم سلبي مستقر")
 
-    if macd_hist > 0 and rsi >= 50:
-        buy_score += 1
-        reasons.append("زخم إيجابي")
-    if macd_hist < 0 and rsi <= 50:
-        sell_score += 1
-        reasons.append("زخم سلبي")
-
-    buy_allowed = buy_score >= 5 and buy_score > sell_score and last > previous
-    sell_allowed = sell_score >= 5 and sell_score > buy_score and last < previous
+    # شروط دخول صارمة وعالية الدقة جداً لتفادي الصفقات الخاسرة
+    buy_allowed = buy_score >= 6 and buy_score > sell_score and last > previous and is_valid_body
+    sell_allowed = sell_score >= 6 and sell_score > buy_score and last < previous and is_valid_body
 
     if buy_allowed:
-        signal = "🟢 شراء مؤكد — مع إدارة مخاطر"
+        signal = "🟢 شراء فائق الدقة — مؤكد بالشموع الانعكاسية"
         signal_type = "BUY"
         stop_reference = last - (1.5 * atr)
-        target1 = last + (1.5 * atr)
-        target2 = last + (2.5 * atr)
+        target1 = last + (1.8 * atr)
+        target2 = last + (2.8 * atr)
     elif sell_allowed:
-        signal = "🔴 بيع مؤكد — مع إدارة مخاطر"
+        signal = "🔴 بيع فائق الدقة — مؤكد بالشموع الانعكاسية"
         signal_type = "SELL"
         stop_reference = last + (1.5 * atr)
-        target1 = last - (1.5 * atr)
-        target2 = last - (2.5 * atr)
+        target1 = last - (1.8 * atr)
+        target2 = last - (2.8 * atr)
     else:
-        signal = "⚪ انتظار — لا يوجد توافق كافٍ"
+        signal = "⚪ انتظار — شروط الدقة العالية غير متوفرة"
         signal_type = "WAIT"
         stop_reference = None
         target1 = None
@@ -448,7 +477,7 @@ def again_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 **Pro Trading Bot**\n\nاختر السوق لتحليل الشموع أو استخدم أزرار الفحص الذكي الشامل أدناه.",
+        "🚀 **Pro Ultra-Precision Trading Bot**\n\nتم تفعيل فلاتر رصد الشموع الانعكاسية وحركة السعر بدقة عالية لتفادي الإشارات الوهمية.\nاختر السوق:",
         reply_markup=markets_keyboard(),
         parse_mode="Markdown"
     )
@@ -456,18 +485,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def force_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 **Pro Trading Bot**\n\nاختر السوق أو استخدم أزرار الفحص الشامل:",
+        "🚀 **Pro Ultra-Precision Trading Bot**\n\nاختر السوق أو استخدم أزرار الفحص الشامل:",
         reply_markup=markets_keyboard(),
         parse_mode="Markdown"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("/start - عرض القائمة الرئيسية\n/help - المساعدة")
+    await update.message.reply_text("/start - القائمة الرئيسية\n/help - المساعدة")
 
 
 async def execute_group_scan(query, markets_list, group_name, scan_periods):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name})...")
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) بدقة متناهية...")
     found_signals = []
     for name, sym in markets_list:
         for per in scan_periods:
@@ -484,7 +513,7 @@ async def execute_group_scan(query, markets_list, group_name, scan_periods):
             except Exception:
                 continue
 
-    msg = f"🟢 **الفرص المتاحة في ({group_name}):**\n\n" + ("\n─────────────────\n".join(found_signals) if found_signals else "⚪ لا توجد فرص مطابقة للشروط حالياً.")
+    msg = f"🟢 **الفرص المؤكدة في ({group_name}):**\n\n" + ("\n─────────────────\n".join(found_signals) if found_signals else "⚪ لا توجد فرص عالية الدقة مطابقة للشروط حالياً.")
     await query.edit_message_text(msg, reply_markup=again_keyboard())
 
 
@@ -529,7 +558,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _, symbol, period = query.data.split("|")
     labels = dict((v, l) for l, v in PERIODS)
-    await query.edit_message_text("⏳ جارٍ تحليل الشموع واستخراج المؤشرات المتقدمة...")
+    await query.edit_message_text("⏳ جارٍ رصد الشموع الانعكاسية وفلترة الإشارات...")
 
     try:
         res = await asyncio.to_thread(analyze, symbol, period)
@@ -555,10 +584,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📈 قوة الاتجاه ADX: {res['adx']:.1f}\n"
             f"📊 RSI: {res['rsi']:.1f} | ATR: {res['atr']:.5g}\n"
             f"📉 بولنجر (عالي: {res['upper_bb']:.5g} | سفلي: {res['lower_bb']:.5g})\n\n"
-            f"🛑 وقف الخسارة المرجعي: {stop_txt}\n"
+            f"🛑 وقف الخسارة: {stop_txt}\n"
             f"🎯 الهدف الأول: {t1_txt}\n"
             f"🎯 الهدف الثاني: {t2_txt}\n\n"
-            f"🔎 الأسباب الفنية:\n{reasons_txt}\n\n"
+            f"🔎 الفلاتر الفنية والشموع الانعكاسية:\n{reasons_txt}\n\n"
             "⚠️ التوصيات تحليلية تقنية وليست نصيحة مالية."
         )
 
@@ -580,7 +609,7 @@ def main():
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, force_start_handler))
 
-    logger.info("Pro Trading Bot started successfully.")
+    logger.info("Pro Ultra-Precision Trading Bot started.")
     app.run_polling()
 
 
