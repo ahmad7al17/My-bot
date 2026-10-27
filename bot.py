@@ -321,20 +321,15 @@ def analyze(symbol, period):
     curr_candle = candles[-1]
     prev_candle = candles[-2]
 
-    # خصائص الشمعة الحالية لتحليل الحركة الانعكاسية (Price Action)
     body_size = abs(curr_candle["close"] - curr_candle["open"])
     total_range = curr_candle["high"] - curr_candle["low"]
     upper_wick = curr_candle["high"] - max(curr_candle["open"], curr_candle["close"])
     lower_wick = min(curr_candle["open"], curr_candle["close"]) - curr_candle["low"]
 
-    # فلتر تجنب الشموع الضئيلة (التذبذب الميت / الدوجي)
     is_valid_body = total_range > 0 and (body_size / total_range) >= 0.35
-
-    # فحص الرفض السعري والشموع الانعكاسية (الذيول)
     has_strong_lower_wick = total_range > 0 and (lower_wick / total_range) >= 0.45
     has_strong_upper_wick = total_range > 0 and (upper_wick / total_range) >= 0.45
 
-    # شمعة الابتلاع (Engulfing Pattern) القوية لتأكيد الانعكاس
     is_bullish_engulfing = (curr_candle["close"] > curr_candle["open"]) and (prev_candle["close"] < prev_candle["open"]) and (curr_candle["close"] >= prev_candle["open"])
     is_bearish_engulfing = (curr_candle["close"] < curr_candle["open"]) and (prev_candle["close"] > prev_candle["open"]) and (curr_candle["close"] <= prev_candle["open"])
 
@@ -359,9 +354,8 @@ def analyze(symbol, period):
     sell_score = 0
     reasons = []
 
-    # فحص قوة الاتجاه الصارم
     if adx >= 22:
-        reasons.append(فوضى أقوى (ADX: {adx:.1f}))
+        reasons.append(f"قوة اتجاه قوية (ADX: {adx:.1f})")
         if trend5 == "صاعد" and trend15 == "صاعد":
             buy_score += 3
             reasons.append("توافق الاتجاه العام صعوداً")
@@ -371,7 +365,6 @@ def analyze(symbol, period):
     else:
         reasons.append(f"تذبذب عرضي ضعيف (ADX: {adx:.1f})")
 
-    # المتوسطات والزخم
     if last > e21[-1] and e9[-1] > e21[-1]:
         buy_score += 2
         reasons.append("دعم إيجابي من المتوسطات")
@@ -379,7 +372,6 @@ def analyze(symbol, period):
         sell_score += 2
         reasons.append("دعم سلبي من المتوسطات")
 
-    # رصد الارتداد من بولنجر باند مع تأكيد الشموع الانعكاسية
     if last <= lower_bb * 1.002 or has_strong_lower_wick or is_bullish_engulfing:
         if is_valid_body or has_strong_lower_wick or is_bullish_engulfing:
             buy_score += 2
@@ -397,7 +389,6 @@ def analyze(symbol, period):
         sell_score += 1
         reasons.append("زخم سلبي مستقر")
 
-    # شروط دخول صارمة وعالية الدقة جداً لتفادي الصفقات الخاسرة
     buy_allowed = buy_score >= 6 and buy_score > sell_score and last > previous and is_valid_body
     sell_allowed = sell_score >= 6 and sell_score > buy_score and last < previous and is_valid_body
 
