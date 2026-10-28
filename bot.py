@@ -512,7 +512,6 @@ def main_keyboard():
 
         rows.append(row)
 
-    # أزرار الفحص الجماعي الشاملة لتشمل (1د، 2د، 3د، 4د، 5د)
     rows.append([
         InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د، 5د]", callback_data="SCAN_GRP1")
     ])
@@ -683,7 +682,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "BACK":
         await query.edit_message_text(
-            "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
+            "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنمقة أدناه.\n"
             "الإشارات احتمالية وليست ضمانًا للربح.",
             reply_markup=main_keyboard(),
         )
@@ -809,7 +808,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # 8. التشغيل النهائي
 # =========================================================
 
-main():
+def main():
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
     except Exception:
