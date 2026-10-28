@@ -80,16 +80,17 @@ MARKETS = [
 ]
 
 EXPIRIES = [
-    ("30 ثانية", 30),
-    ("45 ثانية", 45),
-    ("دقيقة", 60),
-    ("دقيقتان", 120),
-    ("3 دقائق", 180),
+    ("دقيقة واحدة (1د)", "1min"),
+    ("دقيقتان (2د)", "2min"),
+    ("3 دقائق (3د)", "3min"),
+    ("4 دقائق (4د)", "4min"),
+    ("5 دقائق (5د)", "5min"),
+    ("15 دقيقة (15د)", "15min"),
 ]
 
 CACHE = {}
 CACHE_LOCK = threading.Lock()
-CACHE_TTL = 20
+CACHE_TTL = 30
 
 # =========================================================
 # 4. قاعدة بيانات سجل الإشارات
@@ -106,7 +107,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
                 symbol TEXT NOT NULL,
-                expiry_seconds INTEGER NOT NULL,
+                expiry_interval TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 entry_price REAL NOT NULL,
                 score INTEGER NOT NULL,
@@ -120,7 +121,7 @@ def save_signal(symbol, expiry, direction, price, score):
     with db_connect() as con:
         cur = con.execute(
             """INSERT INTO signals
-               (created_at, symbol, expiry_seconds, direction,
+               (created_at, symbol, expiry_interval, direction,
                 entry_price, score, result)
                VALUES (?, ?, ?, ?, ?, ?, 'PENDING')""",
             (
@@ -158,10 +159,11 @@ def get_stats():
 
 
 # =========================================================
-# 5. بيانات Twelve Data
+# 5. بيانات Twelve Data مع الحماية من تجاوز الحد (429)
 # =========================================================
 
 def api_get(endpoint, params):
+    time.sleep(1.0)
     params = dict(params)
     params["apikey"] = API_KEY
 
@@ -170,6 +172,10 @@ def api_get(endpoint, params):
         params=params,
         timeout=15,
     )
+    
+    if response.status_code == 429:
+        raise ValueError("تم تجاوز حد الطلبات المسموح به من المزود (429). يرجى الانتظار قليلاً.")
+
     response.raise_for_status()
     data = response.json()
 
@@ -183,19 +189,38 @@ def api_get(endpoint, params):
 
 def get_price(symbol):
     data = api_get("price", {"symbol": symbol})
-
     if "price" not in data:
         raise ValueError("لم يصل سعر لحظي صالح.")
-
     price = float(data["price"])
-
     if price <= 0:
         raise ValueError("السعر المستلم غير صالح.")
-
     return price
 
 
+def aggregate_candles(candles, minutes):
+    groups = {}
+    for candle in candles:
+        minute_epoch = int(candle["timestamp"] // 60)
+        bucket = minute_epoch // minutes
+        groups.setdefault(bucket, []).append(candle)
+
+    result = []
+    for bucket in sorted(groups):
+        group = sorted(groups[bucket], key=lambda c: c["timestamp"])
+        if len(group) != minutes:
+            continue
+        result.append({
+            "timestamp": group[0]["timestamp"],
+            "open": group[0]["open"],
+            "high": max(c["high"] for c in group),
+            "low": min(c["low"] for c in group),
+            "close": group[-1]["close"],
+        })
+    return result
+
+
 def get_candles(symbol, interval, limit=150):
+    base_interval = "1min"
     key = (symbol, interval, limit)
     now = time.time()
 
@@ -208,7 +233,7 @@ def get_candles(symbol, interval, limit=150):
         "time_series",
         {
             "symbol": symbol,
-            "interval": interval,
+            "interval": base_interval,
             "outputsize": limit,
             "timezone": "UTC",
             "format": "JSON",
@@ -218,14 +243,7 @@ def get_candles(symbol, interval, limit=150):
     if "values" not in data:
         raise ValueError("لا توجد شموع متاحة لهذا السوق.")
 
-    seconds = {
-        "1min": 60,
-        "5min": 300,
-        "15min": 900,
-    }[interval]
-
     candles = []
-
     for item in reversed(data["values"]):
         try:
             dt = datetime.strptime(
@@ -240,32 +258,24 @@ def get_candles(symbol, interval, limit=150):
                 "close": float(item["close"]),
             }
 
-            if not all(
-                candle[k] > 0
-                for k in ("open", "high", "low", "close")
-            ):
-                continue
-
-            if candle["high"] < max(
-                candle["open"], candle["close"]
-            ):
-                continue
-
-            if candle["low"] > min(
-                candle["open"], candle["close"]
-            ):
-                continue
-
-            if dt.timestamp() + seconds <= time.time():
+            if all(candle[k] > 0 for k in ("open", "high", "low", "close")):
                 candles.append(candle)
-
         except (ValueError, TypeError, KeyError):
             continue
 
-    if len(candles) < 60:
-        raise ValueError(
-            f"الشموع المكتملة غير كافية للفريم {interval}."
-        )
+    if interval == "2min":
+        candles = aggregate_candles(candles, 2)
+    elif interval == "3min":
+        candles = aggregate_candles(candles, 3)
+    elif interval == "4min":
+        candles = aggregate_candles(candles, 4)
+    elif interval == "5min":
+        candles = aggregate_candles(candles, 5)
+    elif interval == "15min":
+        candles = aggregate_candles(candles, 15)
+
+    if len(candles) < 40:
+        raise ValueError(f"الشموع المكتملة غير كافية للفريم {interval}.")
 
     with CACHE_LOCK:
         CACHE[key] = {
@@ -277,7 +287,7 @@ def get_candles(symbol, interval, limit=150):
 
 
 # =========================================================
-# 6. المؤشرات الفنية
+# 6. المؤشرات الفنية ومحرك التحليل
 # =========================================================
 
 def ema(values, period):
@@ -368,21 +378,8 @@ def trend(candles):
     return "NEUTRAL"
 
 
-# =========================================================
-# 7. محرك الإشارات
-# =========================================================
-
 def analyze(symbol, expiry):
-    if expiry in (30, 45):
-        return {
-            "direction": "WAIT",
-            "reason": (
-                "فريم انتهاء الصفقة أقصر من دقة مصدر الشموع "
-                "المتاح. يلزم مصدر بيانات لحظي أدق."
-            ),
-        }
-
-    candles1 = get_candles(symbol, "1min")
+    candles1 = get_candles(symbol, expiry)
     candles5 = get_candles(symbol, "5min")
     candles15 = get_candles(symbol, "15min")
 
@@ -390,8 +387,8 @@ def analyze(symbol, expiry):
     current = candles1[-1]
     previous = candles1[-2]
 
-    e9 = ema(close, 9)
-    e21 = ema(close, 21)
+    e9 = ema(close, min(9, len(close)))
+    e21 = ema(close, min(21, len(close)))
     current_rsi = rsi(close)
     current_atr = atr(candles1)
 
@@ -491,7 +488,7 @@ def analyze(symbol, expiry):
 
 
 # =========================================================
-# 8. واجهة تيليجرام
+# 7. واجهة تيليجرام (مع الأزرار المنسقة تماماً مثل الصورة)
 # =========================================================
 
 def main_keyboard():
@@ -515,6 +512,16 @@ def main_keyboard():
 
         rows.append(row)
 
+    # أزرار الفحص الجماعي في الأسفل تماماً مثل الصورة
+    rows.append([
+        InlineKeyboardButton("🔍 رئيسية [1د، 2د، 5د]", callback_data="SCAN_GRP1")
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 5د]", callback_data="SCAN_GRP2")
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 رقمية [1د، 2د، 5د]", callback_data="SCAN_GRP3")
+    ])
     rows.append([
         InlineKeyboardButton("📊 الإحصائيات", callback_data="STATS")
     ])
@@ -525,11 +532,11 @@ def main_keyboard():
 def expiry_keyboard(symbol):
     rows = []
 
-    for label, seconds in EXPIRIES:
+    for label, interval in EXPIRIES:
         rows.append([
             InlineKeyboardButton(
                 f"⏱️ {label}",
-                callback_data=f"E|{symbol}|{seconds}",
+                callback_data=f"E|{symbol}|{interval}",
             )
         ])
 
@@ -542,9 +549,8 @@ def expiry_keyboard(symbol):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "🤖 محلل إشارات EO\n\n"
-        "تحليل فقط — لا ينفذ أي صفقة.\n\n"
-        "اختر السوق:",
+        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
+        "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=main_keyboard(),
     )
 
@@ -644,13 +650,41 @@ async def result_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(str(e))
 
 
+async def execute_group_scan(query, markets_list, group_name):
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) عبر الفريمات (1د، 2د، 5د)...")
+    found_signals = []
+    scan_periods = ["1min", "2min", "5min"]
+    
+    for name, sym in markets_list:
+        for per in scan_periods:
+            try:
+                res = await asyncio.to_thread(analyze, sym, per)
+                if res.get("direction") in ("UP", "DOWN"):
+                    icon = "🟢🟢🟢 صعود" if res["direction"] == "UP" else "🔴🔴🔴 هبوط"
+                    found_signals.append(
+                        f"{icon}\n📊 {name} [{per}]\n"
+                        f"💵 السعر: {res['price']:.5g} | RSI: {res['rsi']:.1f}"
+                    )
+            except Exception:
+                continue
+
+    msg = f"🟢 **الفرص المؤكدة في ({group_name}):**\n\n" + ("\n─────────────────\n".join(found_signals) if found_signals else "⚪ لا توجد فرص مطابقة للشروط حالياً.")
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")
+        ]])
+    )
+
+
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "BACK":
         await query.edit_message_text(
-            "اختر السوق:",
+            "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
+            "الإشارات احتمالية وليست ضمانًا للربح.",
             reply_markup=main_keyboard(),
         )
         return
@@ -675,10 +709,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if query.data == "SCAN_GRP1":
+        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية")
+        return
+    if query.data == "SCAN_GRP2":
+        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("الذهب XAU/USD", "XAU/USD"), ("الفضة XAG/USD", "XAG/USD")], "السلع والمتقاطعات")
+        return
+    if query.data == "SCAN_GRP3":
+        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية")
+        return
+
     if query.data.startswith("M|"):
         symbol = query.data.split("|", 1)[1]
         await query.edit_message_text(
-            f"السوق: {symbol}\nاختر مدة انتهاء الصفقة:",
+            f"السوق: {symbol}\nاختر فريم التحليل:",
             reply_markup=expiry_keyboard(symbol),
         )
         return
@@ -686,21 +730,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query.data.startswith("E|"):
         return
 
-    _, symbol, seconds_text = query.data.split("|")
-    expiry = int(seconds_text)
+    _, symbol, interval = query.data.split("|")
 
     await query.edit_message_text(
-        "⏳ جارٍ فحص البيانات والشموع المكتملة..."
+        "⏳ جارٍ تجميع الشموع وفحص الفريم المختار..."
     )
 
     try:
-        res = await asyncio.to_thread(analyze, symbol, expiry)
+        res = await asyncio.to_thread(analyze, symbol, interval)
 
         if res.get("direction") == "WAIT":
             message = (
                 f"⚪ لا توجد إشارة دخول\n"
                 f"السوق: {symbol}\n"
-                f"مدة الصفقة: {expiry} ثانية\n\n"
+                f"الفريم: {interval}\n\n"
                 f"السبب: {res.get('reason', 'شروط الدخول غير متوفرة.')}"
             )
         else:
@@ -714,7 +757,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             signal_id = await asyncio.to_thread(
                 save_signal,
                 symbol,
-                expiry,
+                interval,
                 direction,
                 res.get("price", 0.0),
                 score,
@@ -726,7 +769,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = (
                 f"{'🟢 إشارة صعود' if direction == 'UP' else '🔴 إشارة هبوط'}\n\n"
                 f"السوق: {symbol}\n"
-                f"مدة انتهاء الصفقة: {expiry} ثانية\n"
+                f"الفريم المختار: {interval}\n"
                 f"السعر الحالي: {res.get('price', 0):.8g}\n"
                 f"إغلاق آخر شمعة: {res.get('candle_close', 0):.8g}\n"
                 f"RSI: {res.get('rsi', 0):.1f}\n"
@@ -763,7 +806,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =========================================================
-# 9. التشغيل النهائي
+# 8. التشغيل النهائي
 # =========================================================
 
 def main():
@@ -785,7 +828,7 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logger.info("EO Signal Bot started successfully.")
+    logger.info("EO Signal Bot started successfully with exact interface.")
     app.run_polling(drop_pending_updates=True)
 
 
