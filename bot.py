@@ -488,7 +488,7 @@ def analyze(symbol, expiry):
 
 
 # =========================================================
-# 7. واجهة تيليجرام (مع الأزرار المنسقة تماماً مثل الصورة)
+# 7. واجهة تيليجرام
 # =========================================================
 
 def main_keyboard():
@@ -512,15 +512,15 @@ def main_keyboard():
 
         rows.append(row)
 
-    # أزرار الفحص الجماعي في الأسفل تماماً مثل الصورة
+    # أزرار الفحص الجماعي الشاملة لتشمل (1د، 2د، 3د، 4د، 5د)
     rows.append([
-        InlineKeyboardButton("🔍 رئيسية [1د، 2د، 5د]", callback_data="SCAN_GRP1")
+        InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د، 5د]", callback_data="SCAN_GRP1")
     ])
     rows.append([
-        InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 5د]", callback_data="SCAN_GRP2")
+        InlineKeyboardButton("🔍 سلع ومتقاطعات [1د، 2د، 3د، 4د، 5د]", callback_data="SCAN_GRP2")
     ])
     rows.append([
-        InlineKeyboardButton("🔍 رقمية [1د، 2د، 5د]", callback_data="SCAN_GRP3")
+        InlineKeyboardButton("🔍 رقمية [1د، 2د، 3د، 4د، 5د]", callback_data="SCAN_GRP3")
     ])
     rows.append([
         InlineKeyboardButton("📊 الإحصائيات", callback_data="STATS")
@@ -549,7 +549,7 @@ def expiry_keyboard(symbol):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنسقة أدناه.\n"
+        "اختر السوق لتحليل الشموع والمؤشرات أو استخدم أزرار الفحص الذكي المنمقة أدناه.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.",
         reply_markup=main_keyboard(),
     )
@@ -651,9 +651,9 @@ async def result_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def execute_group_scan(query, markets_list, group_name):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) عبر الفريمات (1د، 2د، 5د)...")
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) عبر فريمات (1د، 2د، 3د، 4د، 5د)...")
     found_signals = []
-    scan_periods = ["1min", "2min", "5min"]
+    scan_periods = ["1min", "2min", "3min", "4min", "5min"]
     
     for name, sym in markets_list:
         for per in scan_periods:
@@ -809,7 +809,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # 8. التشغيل النهائي
 # =========================================================
 
-def main():
+main():
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
     except Exception:
@@ -828,7 +828,7 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logger.info("EO Signal Bot started successfully with exact interface.")
+    logger.info("EO Signal Bot started successfully.")
     app.run_polling(drop_pending_updates=True)
 
 
