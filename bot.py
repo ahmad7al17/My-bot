@@ -819,10 +819,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =========================================================
-# 8. التشغيل النهائي
+# 8. التشغيل النهائي مع التنظيف التلقائي للاتصالات المعلقة
 # =========================================================
 
 def main():
+    # تنظيف أي Webhook أو Polling قديم أو معلق لدى تيليجرام لمنع خطأ 409
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
     except Exception:
