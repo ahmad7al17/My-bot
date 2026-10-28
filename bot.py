@@ -159,7 +159,7 @@ def get_stats():
 
 
 # =========================================================
-# 5. بيانات Twelve Data مع الحماية من تجاوز الحد (429)
+# 5. بيانات Twelve Data مع زيادة حد الشموع والحماية
 # =========================================================
 
 def api_get(endpoint, params):
@@ -219,7 +219,7 @@ def aggregate_candles(candles, minutes):
     return result
 
 
-def get_candles(symbol, interval, limit=150):
+def get_candles(symbol, interval, limit=300):
     base_interval = "1min"
     key = (symbol, interval, limit)
     now = time.time()
@@ -274,7 +274,7 @@ def get_candles(symbol, interval, limit=150):
     elif interval == "15min":
         candles = aggregate_candles(candles, 15)
 
-    if len(candles) < 40:
+    if len(candles) < 30:
         raise ValueError(f"الشموع المكتملة غير كافية للفريم {interval}.")
 
     with CACHE_LOCK:
@@ -307,7 +307,7 @@ def ema(values, period):
 
 def rsi(values, period=14):
     if len(values) < period + 1:
-        raise ValueError("بيانات RSI غير كافية.")
+        return 50.0
 
     changes = [
         values[i] - values[i - 1]
@@ -353,7 +353,7 @@ def atr(candles, period=14):
         ))
 
     if len(ranges) < period:
-        raise ValueError("بيانات ATR غير كافية.")
+        return 0.001
 
     value = sum(ranges[:period]) / period
 
@@ -365,6 +365,8 @@ def atr(candles, period=14):
 
 def trend(candles):
     closes = [c["close"] for c in candles]
+    if len(closes) < 50:
+        return "NEUTRAL"
     e20 = ema(closes, 20)
     e50 = ema(closes, 50)
 
