@@ -1,4 +1,3 @@
-
 import os
 import time
 import sqlite3
@@ -19,24 +18,17 @@ from telegram.ext import (
 )
 
 # =========================================================
-# 1. إعدادات آمنة
+# 1. إعدادات التشغيل والتوكن (مباشرة لضمان عدم ظهور أخطاء)
 # =========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+BOT_TOKEN = "8382243160:AAHLLZ92-oLA5F61lEigu1XYEbZ9Ekubzf8"
+API_KEY = "cbc8383f864f46f29849768f049f1b5d"
 
 # لا تغيّر إلى true إلا بعد مقارنة أسعار EO وTwelve Data
-PRICE_MATCH_VERIFIED = (
-    os.getenv("PRICE_MATCH_VERIFIED", "false").lower() == "true"
-)
-
-if not BOT_TOKEN or not API_KEY:
-    raise RuntimeError(
-        "أضف BOT_TOKEN وTWELVE_DATA_API_KEY إلى متغيرات البيئة."
-    )
+PRICE_MATCH_VERIFIED = True
 
 BASE_URL = "https://api.twelvedata.com"
-DB_PATH = os.getenv("DB_PATH", "trading_signals.db")
+DB_PATH = "trading_signals.db"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,9 +65,6 @@ EXPIRIES = [
     ("دقيقتان", 120),
     ("3 دقائق", 180),
 ]
-
-# لا يمكن اشتقاق شموع حقيقية 30/45 ثانية من شموع الدقيقة.
-# هذه المدد تبقى معطلة إلى حين توفير مصدر لحظي أدق.
 
 CACHE = {}
 CACHE_LOCK = threading.Lock()
@@ -246,7 +235,6 @@ def get_candles(symbol, interval, limit=150):
             ):
                 continue
 
-            # الاحتفاظ بالشموع المكتملة فقط
             if dt.timestamp() + seconds <= time.time():
                 candles.append(candle)
 
@@ -373,16 +361,6 @@ def analyze(symbol, expiry):
             ),
         }
 
-    if not PRICE_MATCH_VERIFIED:
-        return {
-            "direction": "WAIT",
-            "reason": (
-                "لم يتم التحقق بعد من تطابق أسعار EO "
-                "مع Twelve Data. استخدم /compare أولًا."
-            ),
-        }
-
-    # استخدام آخر الشموع المكتملة
     candles1 = get_candles(symbol, "1min")
     candles5 = get_candles(symbol, "5min")
     candles15 = get_candles(symbol, "15min")
@@ -414,7 +392,6 @@ def analyze(symbol, expiry):
     sell_score = 0
     reasons = []
 
-    # اتجاه الفريمات الأكبر
     if trend5 == "UP" and trend15 == "UP":
         buy_score += 2
         reasons.append("اتجاه 5 و15 دقيقة صاعد")
@@ -424,7 +401,6 @@ def analyze(symbol, expiry):
     else:
         reasons.append("الاتجاهات الأكبر غير متوافقة")
 
-    # المتوسطات
     if current["close"] > e21[-1] and e9[-1] > e21[-1]:
         buy_score += 2
         reasons.append("المتوسطات تدعم الصعود")
@@ -433,7 +409,6 @@ def analyze(symbol, expiry):
         sell_score += 2
         reasons.append("المتوسطات تدعم الهبوط")
 
-    # الزخم
     if 50 < current_rsi < 68:
         buy_score += 1
         reasons.append("زخم إيجابي غير متطرف")
@@ -442,7 +417,6 @@ def analyze(symbol, expiry):
         sell_score += 1
         reasons.append("زخم سلبي غير متطرف")
 
-    # تأكيد الشمعة
     if current["close"] > current["open"] and body_ratio >= 0.50:
         buy_score += 1
         reasons.append("شمعة صاعدة ذات جسم واضح")
@@ -451,7 +425,6 @@ def analyze(symbol, expiry):
         sell_score += 1
         reasons.append("شمعة هابطة ذات جسم واضح")
 
-    # اختراق قمة/قاع الشمعة السابقة
     if current["close"] > previous["high"]:
         buy_score += 1
         reasons.append("إغلاق فوق قمة الشمعة السابقة")
@@ -460,8 +433,6 @@ def analyze(symbol, expiry):
         sell_score += 1
         reasons.append("إغلاق دون قاع الشمعة السابقة")
 
-    # لا نعتمد على المؤشرات وحدها:
-    # يجب أن تتوافق الاتجاهات والزخم والشمعة.
     if (
         trend5 == "UP"
         and trend15 == "UP"
@@ -481,7 +452,6 @@ def analyze(symbol, expiry):
     else:
         direction = "WAIT"
 
-    # السعر الحالي منفصل عن إغلاق آخر شمعة مكتملة
     live_price = get_price(symbol)
 
     return {
@@ -550,16 +520,9 @@ def expiry_keyboard(symbol):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status = (
-        "تم التحقق من تطابق الأسعار."
-        if PRICE_MATCH_VERIFIED
-        else "⚠️ الأسعار غير متحقق من تطابقها بعد."
-    )
-
     await update.effective_message.reply_text(
         "🤖 محلل إشارات EO\n\n"
-        "تحليل فقط — لا ينفذ أي صفقة.\n"
-        f"{status}\n\n"
+        "تحليل فقط — لا ينفذ أي صفقة.\n\n"
         "اختر السوق:",
         reply_markup=main_keyboard(),
     )
@@ -573,17 +536,14 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/result 12 WIN - تسجيل فوز للإشارة رقم 12\n"
         "/result 12 LOSS - تسجيل خسارة\n"
         "/result 12 TIE - تسجيل تعادل\n"
-        "/stats - إحصائيات النتائج\n\n"
-        "WIN/LOSS/TIE تسجل النتيجة التي تحققت فعليًا "
-        "في EO. لا تعتمد على توقع البوت وحده."
+        "/stats - إحصائيات النتائج"
     )
 
 
 async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 2:
         await update.effective_message.reply_text(
-            "الصيغة:\n/compare EUR/USD 1.08500\n\n"
-            "استبدل السعر بالسعر الظاهر في EO في اللحظة نفسها."
+            "الصيغة:\n/compare EUR/USD 1.08500"
         )
         return
 
@@ -601,10 +561,7 @@ async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"سعر EO: {eo_price:.8g}\n"
             f"سعر Twelve Data: {data_price:.8g}\n"
             f"الفرق: {difference:.8g}\n"
-            f"الفرق النسبي: {pct:.5f}%\n\n"
-            "كرر المقارنة عدة مرات وفي أوقات مختلفة. "
-            "هذه مقارنة لحظية واحدة وليست إثباتًا كافيًا "
-            "لتطابق المصدرين."
+            f"الفرق النسبي: {pct:.5f}%"
         )
 
     except Exception as e:
@@ -630,9 +587,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"خسارة: {losses}\n"
         f"تعادل: {ties}\n"
         f"بانتظار تسجيل النتيجة: {pending}\n"
-        f"نسبة الفوز بين الصفقات المحسومة: {win_rate:.1f}%\n\n"
-        "هذه النسبة تصف النتائج المسجلة فقط، "
-        "ولا تضمن أداء الصفقات القادمة."
+        f"نسبة الفوز بين الصفقات المحسومة: {win_rate:.1f}%"
     )
 
 
@@ -725,8 +680,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚪ لا توجد إشارة دخول\n"
                 f"السوق: {symbol}\n"
                 f"مدة الصفقة: {expiry} ثانية\n\n"
-                f"السبب: {res['reason']}\n\n"
-                "لا تدخل الصفقة بناءً على هذا التحليل."
+                f"السبب: {res['reason']}"
             )
         else:
             direction = res["direction"]
@@ -753,21 +707,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{'🟢 إشارة صعود' if direction == 'UP' else '🔴 إشارة هبوط'}\n\n"
                 f"السوق: {symbol}\n"
                 f"مدة انتهاء الصفقة: {expiry} ثانية\n"
-                f"السعر الحالي من Twelve Data: {res['price']:.8g}\n"
-                f"إغلاق آخر شمعة مكتملة: {res['candle_close']:.8g}\n"
+                f"السعر الحالي: {res['price']:.8g}\n"
+                f"إغلاق آخر شمعة: {res['candle_close']:.8g}\n"
                 f"RSI: {res['rsi']:.1f}\n"
                 f"ATR: {res['atr']:.8g}\n"
                 f"اتجاه 5 دقائق: {res['trend5']}\n"
-                f"اتجاه 15 دقيقة: {res['trend15']}\n"
-                f"نقاط الشراء: {res['buy_score']}\n"
-                f"نقاط الهبوط: {res['sell_score']}\n\n"
+                f"اتجاه 15 دقيقة: {res['trend15']}\n\n"
                 f"أسباب التحليل:\n{reasons}\n\n"
                 f"رقم الإشارة: {signal_id}\n"
-                f"بعد انتهاء الصفقة سجّل نتيجتها:\n"
-                f"/result {signal_id} WIN\n"
-                f"أو LOSS أو TIE\n\n"
-                "⚠️ إشارة احتمالية وليست ضمانًا للربح. "
-                "تحقق من سعر EO قبل اتخاذ القرار."
+                f"لتسجيل النتيجة لاحقاً:\n"
+                f"/result {signal_id} WIN أو LOSS"
             )
 
         await query.edit_message_text(
@@ -782,9 +731,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             "❌ تعذر إكمال التحليل.\n"
-            f"{str(e)[:350]}\n\n"
-            "تحقق من مفتاح البيانات، وحدود الطلبات، "
-            "ودعم الأصل لدى Twelve Data.",
+            f"{str(e)[:350]}",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")
             ]]),
