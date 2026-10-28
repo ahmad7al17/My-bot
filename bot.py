@@ -159,7 +159,7 @@ def get_stats():
 
 
 # =========================================================
-# 5. بيانات Twelve Data مع زيادة حد الشموع والحماية
+# 5. بيانات Twelve Data (جلب ذكي ومباشر للفريمات)
 # =========================================================
 
 def api_get(endpoint, params):
@@ -219,8 +219,7 @@ def aggregate_candles(candles, minutes):
     return result
 
 
-def get_candles(symbol, interval, limit=300):
-    base_interval = "1min"
+def get_candles(symbol, interval, limit=200):
     key = (symbol, interval, limit)
     now = time.time()
 
@@ -229,11 +228,21 @@ def get_candles(symbol, interval, limit=300):
         if cached and now - cached["time"] < CACHE_TTL:
             return cached["candles"]
 
+    api_interval = interval
+    need_aggregation = False
+    agg_minutes = 1
+
+    if interval in ["2min", "3min", "4min"]:
+        api_interval = "1min"
+        need_aggregation = True
+        agg_minutes = int(interval.replace("min", ""))
+        limit = 500
+
     data = api_get(
         "time_series",
         {
             "symbol": symbol,
-            "interval": base_interval,
+            "interval": api_interval,
             "outputsize": limit,
             "timezone": "UTC",
             "format": "JSON",
@@ -242,6 +251,15 @@ def get_candles(symbol, interval, limit=300):
 
     if "values" not in data:
         raise ValueError("لا توجد شموع متاحة لهذا السوق.")
+
+    seconds = {
+        "1min": 60,
+        "2min": 120,
+        "3min": 180,
+        "4min": 240,
+        "5min": 300,
+        "15min": 900,
+    }.get(interval, 60)
 
     candles = []
     for item in reversed(data["values"]):
@@ -259,22 +277,16 @@ def get_candles(symbol, interval, limit=300):
             }
 
             if all(candle[k] > 0 for k in ("open", "high", "low", "close")):
-                candles.append(candle)
+                if candle["high"] >= max(candle["open"], candle["close"]) and candle["low"] <= min(candle["open"], candle["close"]):
+                    if dt.timestamp() + seconds <= time.time():
+                        candles.append(candle)
         except (ValueError, TypeError, KeyError):
             continue
 
-    if interval == "2min":
-        candles = aggregate_candles(candles, 2)
-    elif interval == "3min":
-        candles = aggregate_candles(candles, 3)
-    elif interval == "4min":
-        candles = aggregate_candles(candles, 4)
-    elif interval == "5min":
-        candles = aggregate_candles(candles, 5)
-    elif interval == "15min":
-        candles = aggregate_candles(candles, 15)
+    if need_aggregation:
+        candles = aggregate_candles(candles, agg_minutes)
 
-    if len(candles) < 30:
+    if len(candles) < 20:
         raise ValueError(f"الشموع المكتملة غير كافية للفريم {interval}.")
 
     with CACHE_LOCK:
@@ -365,10 +377,10 @@ def atr(candles, period=14):
 
 def trend(candles):
     closes = [c["close"] for c in candles]
-    if len(closes) < 50:
+    if len(closes) < 30:
         return "NEUTRAL"
-    e20 = ema(closes, 20)
-    e50 = ema(closes, 50)
+    e20 = ema(closes, min(20, len(closes)))
+    e50 = ema(closes, min(50, len(closes)))
 
     last = closes[-1]
 
