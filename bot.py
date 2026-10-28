@@ -5,6 +5,7 @@ import logging
 import asyncio
 import threading
 from datetime import datetime, timezone
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -34,7 +35,31 @@ logging.basicConfig(
 logger = logging.getLogger("EO_SignalBot")
 
 # =========================================================
-# 2. الأسواق والفريمات
+# 2. خادم Render البسيط لإبقاء المنفذ مفتوحاً وإسكات التحذير
+# =========================================================
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"EO Signal Bot is running."
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    port = int(os.environ.get("PORT", "10000"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), SimpleHandler)
+    server.serve_forever()
+
+# تشغيل خادم الويب في خلفية النظام ليطابق متطلبات Render
+threading.Thread(target=run_server, daemon=True).start()
+
+# =========================================================
+# 3. الأسواق والفريمات
 # =========================================================
 
 MARKETS = [
@@ -68,7 +93,7 @@ CACHE_LOCK = threading.Lock()
 CACHE_TTL = 20
 
 # =========================================================
-# 3. قاعدة بيانات سجل الإشارات
+# 4. قاعدة بيانات سجل الإشارات
 # =========================================================
 
 def db_connect():
@@ -134,7 +159,7 @@ def get_stats():
 
 
 # =========================================================
-# 4. بيانات Twelve Data
+# 5. بيانات Twelve Data
 # =========================================================
 
 def api_get(endpoint, params):
@@ -253,7 +278,7 @@ def get_candles(symbol, interval, limit=150):
 
 
 # =========================================================
-# 5. المؤشرات الفنية
+# 6. المؤشرات الفنية
 # =========================================================
 
 def ema(values, period):
@@ -345,7 +370,7 @@ def trend(candles):
 
 
 # =========================================================
-# 6. محرك الإشارات
+# 7. محرك الإشارات
 # =========================================================
 
 def analyze(symbol, expiry):
@@ -467,7 +492,7 @@ def analyze(symbol, expiry):
 
 
 # =========================================================
-# 7. واجهة تيليجرام
+# 8. واجهة تيليجرام
 # =========================================================
 
 def main_keyboard():
@@ -740,7 +765,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =========================================================
-# 8. تشغيل البوت
+# 9. التشغيل النهائي
 # =========================================================
 
 def main():
@@ -760,10 +785,9 @@ def main():
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CallbackQueryHandler(buttons))
 
-    # تسجيل معالج الأخطاء لمنع ظهور تنبيهات الـ Error handlers
     app.add_error_handler(error_handler)
 
-    logger.info("EO Signal Bot started successfully.")
+    logger.info("EO Signal Bot started successfully with web server.")
     app.run_polling(drop_pending_updates=True)
 
 
