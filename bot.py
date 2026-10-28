@@ -85,7 +85,10 @@ EXPIRIES = [
     ("3 دقائق (3د)", "3min"),
     ("4 دقائق (4د)", "4min"),
     ("5 دقائق (5د)", "5min"),
+    ("10 دقائق (10د)", "10min"),
     ("15 دقيقة (15د)", "15min"),
+    ("30 دقيقة (30د)", "30min"),
+    ("ساعة واحدة (1س)", "1h"),
 ]
 
 CACHE = {}
@@ -219,7 +222,7 @@ def aggregate_candles(candles, minutes):
     return result
 
 
-def get_candles(symbol, interval, limit=200):
+def get_candles(symbol, interval, limit=250):
     key = (symbol, interval, limit)
     now = time.time()
 
@@ -228,7 +231,7 @@ def get_candles(symbol, interval, limit=200):
         if cached and now - cached["time"] < CACHE_TTL:
             return cached["candles"]
 
-    api_interval = interval
+    api_interval = "1min"
     need_aggregation = False
     agg_minutes = 1
 
@@ -237,6 +240,21 @@ def get_candles(symbol, interval, limit=200):
         need_aggregation = True
         agg_minutes = int(interval.replace("min", ""))
         limit = 500
+    elif interval == "10min":
+        api_interval = "5min"
+        need_aggregation = True
+        agg_minutes = 2
+        limit = 400
+    elif interval in ["15min", "30min", "1h"]:
+        api_interval = interval if interval != "1h" else "1h"
+        if interval == "30min":
+            api_interval = "15min"
+            need_aggregation = True
+            agg_minutes = 2
+        elif interval == "1h":
+            api_interval = "15min"
+            need_aggregation = True
+            agg_minutes = 4
 
     data = api_get(
         "time_series",
@@ -253,12 +271,8 @@ def get_candles(symbol, interval, limit=200):
         raise ValueError("لا توجد شموع متاحة لهذا السوق.")
 
     seconds = {
-        "1min": 60,
-        "2min": 120,
-        "3min": 180,
-        "4min": 240,
-        "5min": 300,
-        "15min": 900,
+        "1min": 60, "2min": 120, "3min": 180, "4min": 240,
+        "5min": 300, "10min": 600, "15min": 900, "30min": 1800, "1h": 3600
     }.get(interval, 60)
 
     candles = []
@@ -502,7 +516,7 @@ def analyze(symbol, expiry):
 
 
 # =========================================================
-# 7. واجهة تيليجرام
+# 7. واجهة تيليجرام (مع الأزرار الإضافية للفريمات الكبرى)
 # =========================================================
 
 def main_keyboard():
@@ -526,6 +540,7 @@ def main_keyboard():
 
         rows.append(row)
 
+    # الأزرار الحالية
     rows.append([
         InlineKeyboardButton("🔍 رئيسية [1د، 2د، 3د، 4د، 5د]", callback_data="SCAN_GRP1")
     ])
@@ -535,6 +550,18 @@ def main_keyboard():
     rows.append([
         InlineKeyboardButton("🔍 رقمية [1د، 2د، 3د، 4د، 5د]", callback_data="SCAN_GRP3")
     ])
+    
+    # الأزرار الإضافية الجديدة للفريمات الكبرى (10د، 15د، 30د، 1س)
+    rows.append([
+        InlineKeyboardButton("🔍 رئيسية [10د، 15د، 30د، 1س]", callback_data="SCAN_BIG1")
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 سلع ومتقاطعات [10د، 15د، 30د، 1س]", callback_data="SCAN_BIG2")
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 رقمية [10د، 15د، 30د، 1س]", callback_data="SCAN_BIG3")
+    ])
+    
     rows.append([
         InlineKeyboardButton("📊 الإحصائيات", callback_data="STATS")
     ])
@@ -663,10 +690,10 @@ async def result_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(str(e))
 
 
-async def execute_group_scan(query, markets_list, group_name):
-    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) عبر فريمات (1د، 2د، 3د، 4د، 5د)...")
+async def execute_group_scan(query, markets_list, group_name, scan_periods):
+    periods_label = "، ".join(scan_periods)
+    await query.edit_message_text(f"🔍 جاري فحص ({group_name}) عبر الفريمات ({periods_label})...")
     found_signals = []
-    scan_periods = ["1min", "2min", "3min", "4min", "5min"]
     
     for name, sym in markets_list:
         for per in scan_periods:
@@ -722,14 +749,26 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # الفحص الجماعي للفريمات القصيرة
     if query.data == "SCAN_GRP1":
-        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية")
+        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية", ["1min", "2min", "3min", "4min", "5min"])
         return
     if query.data == "SCAN_GRP2":
-        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("الذهب XAU/USD", "XAU/USD"), ("الفضة XAG/USD", "XAG/USD")], "السلع والمتقاطعات")
+        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("الذهب XAU/USD", "XAU/USD"), ("الفضة XAG/USD", "XAG/USD")], "السلع والمتقاطعات", ["1min", "2min", "3min", "4min", "5min"])
         return
     if query.data == "SCAN_GRP3":
-        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية")
+        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية", ["1min", "2min", "3min", "4min", "5min"])
+        return
+
+    # الفحص الجماعي للفريمات الكبرى الجديدة (10د، 15د، 30د، 1س)
+    if query.data == "SCAN_BIG1":
+        await execute_group_scan(query, [("EUR/USD", "EUR/USD"), ("GBP/USD", "GBP/USD"), ("USD/JPY", "USD/JPY")], "العملات الرئيسية (كبير)", ["10min", "15min", "30min", "1h"])
+        return
+    if query.data == "SCAN_BIG2":
+        await execute_group_scan(query, [("AUD/USD", "AUD/USD"), ("USD/CAD", "USD/CAD"), ("الذهب XAU/USD", "XAU/USD"), ("الفضة XAG/USD", "XAG/USD")], "السلع والمتقاطعات (كبير)", ["10min", "15min", "30min", "1h"])
+        return
+    if query.data == "SCAN_BIG3":
+        await execute_group_scan(query, [("Bitcoin", "BTC/USD"), ("Ethereum", "ETH/USD"), ("Solana", "SOL/USD")], "العملات الرقمية (كبير)", ["10min", "15min", "30min", "1h"])
         return
 
     if query.data.startswith("M|"):
@@ -819,11 +858,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # =========================================================
-# 8. التشغيل النهائي مع التنظيف التلقائي للاتصالات المعلقة
+# 8. التشغيل النهائي مع التنظيف التلقائي
 # =========================================================
 
 def main():
-    # تنظيف أي Webhook أو Polling قديم أو معلق لدى تيليجرام لمنع خطأ 409
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
     except Exception:
@@ -842,7 +880,7 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logger.info("EO Signal Bot started successfully.")
+    logger.info("EO Signal Bot started successfully with large timeframes.")
     app.run_polling(drop_pending_updates=True)
 
 
