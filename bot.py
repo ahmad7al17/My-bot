@@ -12,19 +12,16 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
     ContextTypes,
-    filters,
 )
 
 # =========================================================
-# 1. إعدادات التشغيل والتوكن (مباشرة لضمان عدم ظهور أخطاء)
+# 1. إعدادات التشغيل والتوكن
 # =========================================================
 
 BOT_TOKEN = "8382243160:AAHLLZ92-oLA5F61lEigu1XYEbZ9Ekubzf8"
 API_KEY = "cbc8383f864f46f29849768f049f1b5d"
 
-# لا تغيّر إلى true إلا بعد مقارنة أسعار EO وTwelve Data
 PRICE_MATCH_VERIFIED = True
 
 BASE_URL = "https://api.twelvedata.com"
@@ -739,10 +736,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# 8. تشغيل البوت
+# 8. تشغيل البوت مع تنظيف الاتصالات القديمة
 # =========================================================
 
 def main():
+    # تنظيف أي اتصال Webhook أو Polling قديم عالق في تيليجرام
+    try:
+        requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
+    except Exception:
+        pass
+
     init_db()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -754,8 +757,8 @@ def main():
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CallbackQueryHandler(buttons))
 
-    logger.info("EO Signal Bot started.")
-    app.run_polling()
+    logger.info("EO Signal Bot started successfully.")
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
