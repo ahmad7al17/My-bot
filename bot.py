@@ -735,12 +735,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+
 # =========================================================
-# 8. تشغيل البوت مع تنظيف الاتصالات القديمة
+# 8. تشغيل البوت
 # =========================================================
 
 def main():
-    # تنظيف أي اتصال Webhook أو Polling قديم عالق في تيليجرام
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=10)
     except Exception:
@@ -756,6 +759,9 @@ def main():
     app.add_handler(CommandHandler("result", result_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CallbackQueryHandler(buttons))
+
+    # تسجيل معالج الأخطاء لمنع ظهور تنبيهات الـ Error handlers
+    app.add_error_handler(error_handler)
 
     logger.info("EO Signal Bot started successfully.")
     app.run_polling(drop_pending_updates=True)
