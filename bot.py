@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger("EO_SignalBot")
 
 # =========================================================
-# 2. خادم Render البسيط لإبقاء المنفذ مفتوحاً وإسكات التحذير
+# 2. خادم Render البسيط لإبقاء المنفذ مفتوحاً
 # =========================================================
 
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -55,7 +55,6 @@ def run_server():
     server = ThreadingHTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# تشغيل خادم الويب في خلفية النظام ليطابق متطلبات Render
 threading.Thread(target=run_server, daemon=True).start()
 
 # =========================================================
@@ -697,19 +696,19 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         res = await asyncio.to_thread(analyze, symbol, expiry)
 
-        if res["direction"] == "WAIT":
+        if res.get("direction") == "WAIT":
             message = (
                 f"⚪ لا توجد إشارة دخول\n"
                 f"السوق: {symbol}\n"
                 f"مدة الصفقة: {expiry} ثانية\n\n"
-                f"السبب: {res['reason']}"
+                f"السبب: {res.get('reason', 'شروط الدخول غير متوفرة.')}"
             )
         else:
-            direction = res["direction"]
+            direction = res.get("direction", "WAIT")
             score = (
-                res["buy_score"]
+                res.get("buy_score", 0)
                 if direction == "UP"
-                else res["sell_score"]
+                else res.get("sell_score", 0)
             )
 
             signal_id = await asyncio.to_thread(
@@ -717,24 +716,23 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 symbol,
                 expiry,
                 direction,
-                res["price"],
+                res.get("price", 0.0),
                 score,
             )
 
-            reasons = "\n".join(
-                "• " + x for x in res["reasons"]
-            )
+            reasons_list = res.get("reasons", ["شروط فنية مطابقة"])
+            reasons = "\n".join("• " + x for x in reasons_list)
 
             message = (
                 f"{'🟢 إشارة صعود' if direction == 'UP' else '🔴 إشارة هبوط'}\n\n"
                 f"السوق: {symbol}\n"
                 f"مدة انتهاء الصفقة: {expiry} ثانية\n"
-                f"السعر الحالي: {res['price']:.8g}\n"
-                f"إغلاق آخر شمعة: {res['candle_close']:.8g}\n"
-                f"RSI: {res['rsi']:.1f}\n"
-                f"ATR: {res['atr']:.8g}\n"
-                f"اتجاه 5 دقائق: {res['trend5']}\n"
-                f"اتجاه 15 دقيقة: {res['trend15']}\n\n"
+                f"السعر الحالي: {res.get('price', 0):.8g}\n"
+                f"إغلاق آخر شمعة: {res.get('candle_close', 0):.8g}\n"
+                f"RSI: {res.get('rsi', 0):.1f}\n"
+                f"ATR: {res.get('atr', 0):.8g}\n"
+                f"اتجاه 5 دقائق: {res.get('trend5', 'N/A')}\n"
+                f"اتجاه 15 دقيقة: {res.get('trend15', 'N/A')}\n\n"
                 f"أسباب التحليل:\n{reasons}\n\n"
                 f"رقم الإشارة: {signal_id}\n"
                 f"لتسجيل النتيجة لاحقاً:\n"
@@ -787,7 +785,7 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logger.info("EO Signal Bot started successfully with web server.")
+    logger.info("EO Signal Bot started successfully.")
     app.run_polling(drop_pending_updates=True)
 
 
