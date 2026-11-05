@@ -30,7 +30,7 @@ if not API_KEY:
 BASE_URL = "https://api.twelvedata.com"
 DB_PATH = os.getenv("DB_PATH", "trading_signals.db")
 CACHE_TTL = 20
-MIN_SCORE = 5  # تم خفض الحد الأدنى قليلاً لضمان التقاط الفرص الجيدة وعدم تفويتها
+MIN_SCORE = 7
 SAUDI_TZ = timezone(timedelta(hours=3))
 
 logging.basicConfig(
@@ -458,7 +458,7 @@ def get_candles(symbol, interval, limit=250):
 
 def ema(values, period):
     if len(values) < period:
-        raise ValueError("بيانات EMA غير كافية.")
+        return [None] * len(values)
 
     alpha = 2 / (period + 1)
     out = [sum(values[:period]) / period]
@@ -527,7 +527,7 @@ def atr(candles, period=14):
 
 def adx(candles, period=14):
     if len(candles) < period * 2 + 2:
-        return 25.0  # قيمة افتراضية متوازنة لكي لا تمنع الإشارات تعسفياً
+        return 0.0
 
     plus_dm = []
     minus_dm = []
@@ -577,7 +577,7 @@ def adx(candles, period=14):
         )
 
     if len(dx_values) < period:
-        return 25.0
+        return 0.0
 
     return (
         sum(dx_values[-period:]) /
@@ -586,7 +586,7 @@ def adx(candles, period=14):
 
 
 # =========================================================
-# 7) توقيت الشمعة
+# 7) توقيت الشمعة والاتجاه
 # =========================================================
 
 def candle_clock(interval, now=None):
@@ -665,36 +665,55 @@ def candle_timing_text(symbol, interval):
 
 
 def trend_direction(candles):
+    if len(candles) < 60:
+        return "NEUTRAL"
+
     closes = [c["close"] for c in candles]
 
-    e20 = ema(closes, min(20, len(closes)))
-    e50 = ema(closes, min(50, len(closes)))
+    e20 = ema(closes, 20)
+    e50 = ema(closes, 50)
 
     if e20[-1] is None or e50[-1] is None:
         return "NEUTRAL"
 
-    if closes[-1] > e20[-1]:
+    # نحتاج إلى ميل واضح للمتوسط وليس مجرد وجود السعر فوقه
+    slope = e20[-1] - e20[-4]
+
+    if (
+        closes[-1] > e20[-1] > e50[-1]
+        and slope > 0
+    ):
         return "UP"
-    if closes[-1] < e20[-1]:
+
+    if (
+        closes[-1] < e20[-1] < e50[-1]
+        and slope < 0
+    ):
         return "DOWN"
 
     return "NEUTRAL"
 
 
 # =========================================================
-# 8) محرك التحليل المطور (دقيق ومرن لمنع جفاف الفرص)
+# 8) محرك التحليل الصارم المطور
 # =========================================================
 
 def analyze(symbol, interval):
-    candles = get_candles(symbol, interval)
-    c5 = get_candles(symbol, "5min")
-    c15 = get_candles(symbol, "15min")
+    candles = get_candles(symbol, interval, limit=250)
+    c5 = get_candles(symbol, "5min", limit=250)
+    c15 = get_candles(symbol, "15min", limit=250)
+
+    if len(candles) < 60:
+        raise ValueError("الشموع غير كافية للتحليل.")
 
     closes = [c["close"] for c in candles]
-    current = candles[-1]
 
-    e9 = ema(closes, min(9, len(closes)))
-    e21 = ema(closes, min(21, len(closes)))
+    current = candles[-1]
+    previous = candles[-2]
+
+    e9 = ema(closes, 9)
+    e21 = ema(closes, 21)
+    e50 = ema(closes, 50)
 
     r = rsi(closes)
     a = atr(candles)
@@ -702,6 +721,9 @@ def analyze(symbol, interval):
 
     t5 = trend_direction(c5)
     t15 = trend_direction(c15)
+
+    if a <= 0 or not math.isfinite(a):
+        raise ValueError("قيمة ATR غير صالحة.")
 
     candle_range = current["high"] - current["low"]
 
@@ -711,62 +733,238 @@ def analyze(symbol, interval):
     body = abs(current["close"] - current["open"])
     body_ratio = body / candle_range
 
+    upper_wick = (
+        current["high"] -
+        max(current["open"], current["close"])
+    )
+
+    lower_wick = (
+        min(current["open"], current["close"]) -
+        current["low"]
+    )
+
+    upper_ratio = upper_wick / candle_range
+    lower_ratio = lower_wick / candle_range
+
     buy = 0
     sell = 0
+
     reasons = []
     blockers = []
 
-    # تقييم الزخم والاتجاه بشروط متوازنة ومضبوطة
-    if t5 == "UP" or t15 == "UP":
+    # -----------------------------------------
+    # 1. توافق الفريمات الأكبر
+    # -----------------------------------------
+
+    if t5 == "UP" and t15 == "UP":
         buy += 2
-        reasons.append("توافق جزئي مع الاتجاه الصاعد")
-    if t5 == "DOWN" or t15 == "DOWN":
+        reasons.append("الفريمان 5 و15 دقيقة صاعدان")
+
+    elif t5 == "DOWN" and t15 == "DOWN":
         sell += 2
-        reasons.append("توافق جزئي مع الاتجاه الهابط")
+        reasons.append("الفريمان 5 و15 دقيقة هابطان")
 
-    if closes[-1] > e9[-1]:
-        buy += 2
-        reasons.append("السعر فوق المتوسط السريع EMA9")
-    if closes[-1] < e9[-1]:
-        sell += 2
-        reasons.append("السعر تحت المتوسط السريع EMA9")
-
-    if e9[-1] and e21[-1]:
-        if e9[-1] > e21[-1]:
-            buy += 1
-            reasons.append("تقاطع إيجابي للمتوسطات القصيرة")
-        elif e9[-1] < e21[-1]:
-            sell += 1
-            reasons.append("تقاطع سلبي للمتوسطات القصيرة")
-
-    # فلاتر الزخم RSI المرنة
-    if 45 <= r <= 75:
-        buy += 1
-        reasons.append(f"مؤشر الزخم RSI مناسب للصعود ({r:.1f})")
-    if 25 <= r <= 55:
-        sell += 1
-        reasons.append(f"مؤشر الزخم RSI مناسب للهبوط ({r:.1f})")
-
-    # فلاتر جودة الشمعة
-    if current["close"] > current["open"] and body_ratio >= 0.4:
-        buy += 1
-        reasons.append("شمعة إيجابية ذات جسم واضح")
-    elif current["close"] < current["open"] and body_ratio >= 0.4:
-        sell += 1
-        reasons.append("شمعة سلبية ذات جسم واضح")
-
-    direction = "WAIT"
-    score = max(buy, sell)
-
-    if buy >= MIN_SCORE and buy > sell:
-        direction = "UP"
-    elif sell >= MIN_SCORE and sell > buy:
-        direction = "DOWN"
     else:
-        blockers.append("الشروط لم تصل للحد الأدنى من النقاط المطلوبة")
+        blockers.append(
+            "تعارض أو ضعف اتجاه الفريمات الأكبر"
+        )
+
+    # -----------------------------------------
+    # 2. ترتيب المتوسطات
+    # -----------------------------------------
+
+    if e9[-1] > e21[-1] > e50[-1]:
+        buy += 2
+        reasons.append("ترتيب المتوسطات إيجابي")
+
+    elif e9[-1] < e21[-1] < e50[-1]:
+        sell += 2
+        reasons.append("ترتيب المتوسطات سلبي")
+
+    else:
+        blockers.append("المتوسطات غير متوافقة")
+
+    # -----------------------------------------
+    # 3. قوة الزخم RSI
+    # -----------------------------------------
+
+    if 52 <= r <= 68:
+        buy += 1
+        reasons.append(f"زخم صاعد مناسب RSI={r:.1f}")
+
+    elif 32 <= r <= 48:
+        sell += 1
+        reasons.append(f"زخم هابط مناسب RSI={r:.1f}")
+
+    else:
+        blockers.append(
+            f"الزخم غير مناسب أو قريب من التشبع RSI={r:.1f}"
+        )
+
+    # -----------------------------------------
+    # 4. قوة الاتجاه ADX
+    # -----------------------------------------
+
+    if dx >= 18:
+        buy += 1
+        sell += 1
+        reasons.append(f"قوة اتجاه مقبولة ADX={dx:.1f}")
+
+    else:
+        blockers.append(
+            f"الاتجاه ضعيف ADX={dx:.1f}"
+        )
+
+    # -----------------------------------------
+    # 5. شكل الشمعة والظلال
+    # -----------------------------------------
+
+    if (
+        current["close"] > current["open"]
+        and body_ratio >= 0.40
+        and upper_ratio <= 0.35
+    ):
+        buy += 1
+        reasons.append("شمعة صاعدة بجسم واضح وظل علوي محدود")
+
+    elif (
+        current["close"] < current["open"]
+        and body_ratio >= 0.40
+        and lower_ratio <= 0.35
+    ):
+        sell += 1
+        reasons.append("شمعة هابطة بجسم واضح وظل سفلي محدود")
+
+    else:
+        blockers.append(
+            "شكل الشمعة لا يؤكد استمرار الحركة"
+        )
+
+    # -----------------------------------------
+    # 6. اكتشاف الشمعة المستهلكة
+    # -----------------------------------------
+
+    if candle_range > a * 1.8:
+        blockers.append(
+            "الشمعة كبيرة جداً مقارنة بمتوسط الحركة ATR"
+        )
+
+    # لا ندخل إذا ابتعد الإغلاق كثيراً عن EMA9
+    distance_from_ema = abs(
+        current["close"] - e9[-1]
+    ) / a
+
+    if distance_from_ema > 1.0:
+        blockers.append(
+            "السعر ممتد بعيداً عن المتوسط وقد يكون معرضاً للتراجع"
+        )
+
+    # -----------------------------------------
+    # 7. اكتشاف شموع الانعكاس
+    # -----------------------------------------
+
+    if (
+        upper_ratio >= 0.50
+        and current["close"] < current["open"]
+    ):
+        blockers.append(
+            "ظل علوي طويل مع إغلاق سلبي: احتمال رفض الأسعار المرتفعة"
+        )
+
+    if (
+        lower_ratio >= 0.50
+        and current["close"] > current["open"]
+    ):
+        blockers.append(
+            "ظل سفلي طويل مع إغلاق إيجابي: احتمال رفض الأسعار المنخفضة"
+        )
+
+    # -----------------------------------------
+    # 8. مقارنة الشمعة الحالية بالسابقة
+    # -----------------------------------------
+
+    if (
+        current["close"] > current["open"]
+        and previous["close"] < previous["open"]
+        and current["close"] < previous["open"]
+    ):
+        blockers.append(
+            "الشمعة الحالية لم تستعد مستوى افتتاح الشمعة السابقة"
+        )
+
+    if (
+        current["close"] < current["open"]
+        and previous["close"] > previous["open"]
+        and current["close"] > previous["open"]
+    ):
+        blockers.append(
+            "الشمعة الحالية لم تكسر مستوى افتتاح الشمعة السابقة"
+        )
+
+    # -----------------------------------------
+    # 9. تأكيد السعر اللحظي
+    # -----------------------------------------
 
     live_price = get_price(symbol)
+
+    live_distance = (
+        live_price - current["close"]
+    ) / a
+
+    if abs(live_distance) > 0.45:
+        blockers.append(
+            "السعر اللحظي ابتعد عن إغلاق الشمعة، احتمال تغير الحركة"
+        )
+
+    if live_distance < -0.15:
+        blockers.append(
+            "السعر اللحظي يتراجع ضد استمرار الصعود"
+        )
+
+    if live_distance > 0.15:
+        blockers.append(
+            "السعر اللحظي يرتفع ضد استمرار الهبوط"
+        )
+
+    # -----------------------------------------
+    # 10. منع الدخول المتأخر
+    # -----------------------------------------
+
     candle_start, elapsed, remaining = candle_clock(interval)
+
+    if elapsed > SECONDS[interval] * 0.65:
+        blockers.append(
+            "الدخول متأخر داخل الشمعة الحالية"
+        )
+
+    # -----------------------------------------
+    # 11. القرار النهائي
+    # -----------------------------------------
+
+    direction = "WAIT"
+
+    if (
+        buy >= MIN_SCORE
+        and buy > sell
+        and t5 == "UP"
+        and t15 == "UP"
+        and not blockers
+    ):
+        direction = "UP"
+
+    elif (
+        sell >= MIN_SCORE
+        and sell > buy
+        and t5 == "DOWN"
+        and t15 == "DOWN"
+        and not blockers
+    ):
+        direction = "DOWN"
+
+    if direction == "WAIT" and not blockers:
+        blockers.append(
+            "النقاط غير كافية لإصدار إشارة"
+        )
 
     return {
         "direction": direction,
@@ -779,7 +977,7 @@ def analyze(symbol, interval):
         "trend15": t15,
         "buy_score": buy,
         "sell_score": sell,
-        "score": score,
+        "score": max(buy, sell),
         "reasons": reasons,
         "blockers": blockers,
         "expiry": interval,
@@ -798,25 +996,69 @@ def backtest(symbol, interval):
         symbol, interval, limit=500
     )
 
-    if len(candles) < 50:
+    if len(candles) < 120:
         raise ValueError(
             "لا توجد بيانات كافية للاختبار التاريخي."
         )
 
     wins = losses = ties = trades = 0
 
-    for i in range(30, len(candles) - 1):
+    for i in range(100, len(candles) - 1):
         history = candles[:i + 1]
         close = [x["close"] for x in history]
 
-        e9 = ema(close, min(9, len(close)))
+        e9 = ema(close, 9)
+        e21 = ema(close, 21)
+        e50 = ema(close, 50)
+
         r = rsi(close)
+        dx = adx(history)
         c = history[-1]
 
+        rng = c["high"] - c["low"]
+
+        if rng <= 0 or dx < 18:
+            continue
+
+        body = abs(c["close"] - c["open"])
+        body_ratio = body / rng
+
+        location = (
+            c["close"] - c["low"]
+        ) / rng
+
+        upper = (
+            c["high"] -
+            max(c["open"], c["close"])
+        )
+
+        lower = (
+            min(c["open"], c["close"]) -
+            c["low"]
+        )
+
+        if body_ratio < 0.40:
+            continue
+
+        if upper / rng > 0.35 or lower / rng > 0.35:
+            continue
+
         direction = None
-        if c["close"] > e9[-1] and 45 <= r <= 70:
+
+        if (
+            e9[-1] is not None and e21[-1] is not None and e50[-1] is not None
+            and e9[-1] > e21[-1] > e50[-1]
+            and 52 <= r <= 68
+            and location >= 0.65
+        ):
             direction = "UP"
-        elif c["close"] < e9[-1] and 30 <= r <= 55:
+
+        elif (
+            e9[-1] is not None and e21[-1] is not None and e50[-1] is not None
+            and e9[-1] < e21[-1] < e50[-1]
+            and 32 <= r <= 48
+            and location <= 0.35
+        ):
             direction = "DOWN"
 
         if not direction:
@@ -827,12 +1069,14 @@ def backtest(symbol, interval):
 
         if nxt == c["close"]:
             ties += 1
+
         elif (
             direction == "UP" and nxt > c["close"]
         ) or (
             direction == "DOWN" and nxt < c["close"]
         ):
             wins += 1
+
         else:
             losses += 1
 
@@ -848,8 +1092,9 @@ def backtest(symbol, interval):
         ),
     }
 
+
 # =========================================================
-# 10) واجهة تيليجرام والأزرار (محفوظة بالكامل دون أي تغيير)
+# 10) واجهة تيليجرام والأزرار
 # =========================================================
 
 def main_keyboard():
@@ -960,7 +1205,8 @@ def clock_keyboard(symbol, interval):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "🤖 بوت التحليل المطور\n"
+        "🤖 بوت التحليل الصارم المطور\n"
+        "يرفض الفرص الضعيفة والمتضاربة.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.\n\n"
         "الأوامر: /help",
         reply_markup=main_keyboard()
@@ -1126,7 +1372,7 @@ async def execute_scan(query, markets, intervals, group_title):
     )
 
     await query.edit_message_text(
-        f"🔍 بدأ الفحص الجماعي\n\n"
+        f"🔍 بدأ الفحص الصارم\n\n"
         f"المجموعة: {group_title}\n"
         f"الفريمات: {interval_text}\n\n"
         "⏳ يجري فحص الأسواق..."
@@ -1203,7 +1449,7 @@ async def execute_scan(query, markets, intervals, group_title):
                 )
 
     summary = (
-        "🔎 انتهى الفحص الجماعي\n\n"
+        "🔎 انتهى الفحص الصارم\n\n"
         f"المجموعة: {group_title}\n"
         f"عدد الأسواق: {len(markets)}\n"
         f"الفريمات: {interval_text}\n"
@@ -1218,7 +1464,7 @@ async def execute_scan(query, markets, intervals, group_title):
         )
     else:
         summary += (
-            "لم تظهر فرص اجتازت الشروط في هذه الجولة."
+            "لم تظهر فرص اجتازت جميع شروط التحليل الصارم."
         )
 
     await query.edit_message_text(
@@ -1451,7 +1697,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "• " + x
                     for x in (
                         res["blockers"]
-                        or ["الشروط غير مكتملة بالكامل"]
+                        or ["الشروط الصارمة غير مكتملة"]
                     )
                 )
                 + f"\n\nافتتاح الشمعة وفق UTC: {start_dt}\n"
