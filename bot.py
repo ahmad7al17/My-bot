@@ -39,6 +39,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("EO_StrictBot")
 
+# معرف المستخدم المستهدف لإرسال التنبيهات التلقائية (سيتم تحديثه تلقائياً عند أول /start)
+TARGET_CHAT_ID = None
+CHAT_ID_LOCK = threading.Lock()
+
 # =========================================================
 # 2) خادم Render
 # =========================================================
@@ -676,7 +680,6 @@ def trend_direction(candles):
     if e20[-1] is None or e50[-1] is None:
         return "NEUTRAL"
 
-    # نحتاج إلى ميل واضح للمتوسط وليس مجرد وجود السعر فوقه
     slope = e20[-1] - e20[-4]
 
     if (
@@ -752,10 +755,6 @@ def analyze(symbol, interval):
     reasons = []
     blockers = []
 
-    # -----------------------------------------
-    # 1. توافق الفريمات الأكبر
-    # -----------------------------------------
-
     if t5 == "UP" and t15 == "UP":
         buy += 2
         reasons.append("الفريمان 5 و15 دقيقة صاعدان")
@@ -769,10 +768,6 @@ def analyze(symbol, interval):
             "تعارض أو ضعف اتجاه الفريمات الأكبر"
         )
 
-    # -----------------------------------------
-    # 2. ترتيب المتوسطات
-    # -----------------------------------------
-
     if e9[-1] > e21[-1] > e50[-1]:
         buy += 2
         reasons.append("ترتيب المتوسطات إيجابي")
@@ -783,10 +778,6 @@ def analyze(symbol, interval):
 
     else:
         blockers.append("المتوسطات غير متوافقة")
-
-    # -----------------------------------------
-    # 3. قوة الزخم RSI
-    # -----------------------------------------
 
     if 52 <= r <= 68:
         buy += 1
@@ -801,10 +792,6 @@ def analyze(symbol, interval):
             f"الزخم غير مناسب أو قريب من التشبع RSI={r:.1f}"
         )
 
-    # -----------------------------------------
-    # 4. قوة الاتجاه ADX
-    # -----------------------------------------
-
     if dx >= 18:
         buy += 1
         sell += 1
@@ -814,10 +801,6 @@ def analyze(symbol, interval):
         blockers.append(
             f"الاتجاه ضعيف ADX={dx:.1f}"
         )
-
-    # -----------------------------------------
-    # 5. شكل الشمعة والظلال
-    # -----------------------------------------
 
     if (
         current["close"] > current["open"]
@@ -840,16 +823,11 @@ def analyze(symbol, interval):
             "شكل الشمعة لا يؤكد استمرار الحركة"
         )
 
-    # -----------------------------------------
-    # 6. اكتشاف الشمعة المستهلكة
-    # -----------------------------------------
-
     if candle_range > a * 1.8:
         blockers.append(
             "الشمعة كبيرة جداً مقارنة بمتوسط الحركة ATR"
         )
 
-    # لا ندخل إذا ابتعد الإغلاق كثيراً عن EMA9
     distance_from_ema = abs(
         current["close"] - e9[-1]
     ) / a
@@ -858,10 +836,6 @@ def analyze(symbol, interval):
         blockers.append(
             "السعر ممتد بعيداً عن المتوسط وقد يكون معرضاً للتراجع"
         )
-
-    # -----------------------------------------
-    # 7. اكتشاف شموع الانعكاس
-    # -----------------------------------------
 
     if (
         upper_ratio >= 0.50
@@ -878,10 +852,6 @@ def analyze(symbol, interval):
         blockers.append(
             "ظل سفلي طويل مع إغلاق إيجابي: احتمال رفض الأسعار المنخفضة"
         )
-
-    # -----------------------------------------
-    # 8. مقارنة الشمعة الحالية بالسابقة
-    # -----------------------------------------
 
     if (
         current["close"] > current["open"]
@@ -900,10 +870,6 @@ def analyze(symbol, interval):
         blockers.append(
             "الشمعة الحالية لم تكسر مستوى افتتاح الشمعة السابقة"
         )
-
-    # -----------------------------------------
-    # 9. تأكيد السعر اللحظي
-    # -----------------------------------------
 
     live_price = get_price(symbol)
 
@@ -926,20 +892,12 @@ def analyze(symbol, interval):
             "السعر اللحظي يرتفع ضد استمرار الهبوط"
         )
 
-    # -----------------------------------------
-    # 10. منع الدخول المتأخر
-    # -----------------------------------------
-
     candle_start, elapsed, remaining = candle_clock(interval)
 
     if elapsed > SECONDS[interval] * 0.65:
         blockers.append(
             "الدخول متأخر داخل الشمعة الحالية"
         )
-
-    # -----------------------------------------
-    # 11. القرار النهائي
-    # -----------------------------------------
 
     direction = "WAIT"
 
@@ -1204,9 +1162,14 @@ def clock_keyboard(symbol, interval):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global TARGET_CHAT_ID
+    chat_id = update.effective_chat.id
+    with CHAT_ID_LOCK:
+        TARGET_CHAT_ID = chat_id
+
     await update.effective_message.reply_text(
         "🤖 بوت التحليل الصارم المطور\n"
-        "يرفض الفرص الضعيفة والمتضاربة.\n"
+        "تم تفعيل نظام البحث التلقائي (فريم 15 دقيقة) من 6:00 مساءً إلى 12:30 صباحاً.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.\n\n"
         "الأوامر: /help",
         reply_markup=main_keyboard()
@@ -1223,8 +1186,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/backtest EUR/USD 1min — اختبار تاريخي تقريبي\n"
         "/compare EUR/USD 1.08500 — مقارنة السعر مع EO\n"
         "/timer ID — الوقت المتبقي للصفقة\n\n"
-        "بعد دخولك اليدوي في EO اضغط «بدأت الصفقة الآن» "
-        "لبدء عداد الصفقة."
+        "البحث التلقائي يعمل يومياً من 6:00 م إلى 12:30 ص للفريم 15 دقيقة."
     )
 
 
@@ -1363,20 +1325,20 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# 11) الفحص الجماعي
+# 11) الفحص الجماعي اليدوي والتلقائي
 # =========================================================
 
-async def execute_scan(query, markets, intervals, group_title):
-    interval_text = "، ".join(
-        INTERVAL_LABELS[x] for x in intervals
-    )
-
-    await query.edit_message_text(
-        f"🔍 بدأ الفحص الصارم\n\n"
-        f"المجموعة: {group_title}\n"
-        f"الفريمات: {interval_text}\n\n"
-        "⏳ يجري فحص الأسواق..."
-    )
+async def execute_scan(query_or_bot, markets, intervals, group_title, chat_id=None):
+    is_automated = chat_id is not None
+    
+    if not is_automated:
+        interval_text = "، ".join(INTERVAL_LABELS[x] for x in intervals)
+        await query_or_bot.edit_message_text(
+            f"🔍 بدأ الفحص الصارم\n\n"
+            f"المجموعة: {group_title}\n"
+            f"الفريمات: {interval_text}\n\n"
+            "⏳ يجري فحص الأسواق..."
+        )
 
     found = []
     errors = 0
@@ -1412,8 +1374,9 @@ async def execute_scan(query, markets, intervals, group_title):
                     else "🔴 إشارة هبوط"
                 )
 
+                prefix = "🚨 (تلقائي) " if is_automated else ""
                 message = (
-                    f"{direction_text}\n"
+                    f"{prefix}{direction_text}\n"
                     f"السوق: {name}\n"
                     f"الفريم: {INTERVAL_LABELS[interval]}\n"
                     f"السعر: {res['price']:.8g}\n"
@@ -1448,55 +1411,114 @@ async def execute_scan(query, markets, intervals, group_title):
                     symbol, interval, e
                 )
 
-    summary = (
-        "🔎 انتهى الفحص الصارم\n\n"
-        f"المجموعة: {group_title}\n"
-        f"عدد الأسواق: {len(markets)}\n"
-        f"الفريمات: {interval_text}\n"
-        f"عدد الإشارات المقبولة: {len(found)}\n"
-        f"الأخطاء أو البيانات غير المتاحة: {errors}\n\n"
-    )
-
-    if found:
-        summary += (
-            "👇 ستجد تفاصيل كل إشارة في رسالة مستقلة "
-            "مع زر بدء عداد الصفقة."
+    if not is_automated:
+        interval_text = "، ".join(INTERVAL_LABELS[x] for x in intervals)
+        summary = (
+            "🔎 انتهى الفحص الصارم\n\n"
+            f"المجموعة: {group_title}\n"
+            f"عدد الأسواق: {len(markets)}\n"
+            f"الفريمات: {interval_text}\n"
+            f"عدد الإشارات المقبولة: {len(found)}\n"
+            f"الأخطاء أو البيانات غير المتاحة: {errors}\n\n"
         )
+
+        if found:
+            summary += "👇 ستجد تفاصيل كل إشارة في رسالة مستقلة مع زر بدء عداد الصفقة."
+        else:
+            summary += "لم تظهر فرص اجتازت جميع شروط التحليل الصارم."
+
+        await query_or_bot.edit_message_text(
+            summary,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ الأسواق", callback_data="BACK")
+            ]])
+        )
+
+        for item in found:
+            try:
+                await query_or_bot.message.reply_text(
+                    item["message"],
+                    reply_markup=item["keyboard"]
+                )
+            except Exception as e:
+                logger.error("Could not send signal message: %s", e)
     else:
-        summary += (
-            "لم تظهر فرص اجتازت جميع شروط التحليل الصارم."
-        )
-
-    await query.edit_message_text(
-        summary,
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(
-                "⬅️ الأسواق",
-                callback_data="BACK"
-            )
-        ]])
-    )
-
-    for item in found:
-        try:
-            await query.message.reply_text(
-                item["message"],
-                reply_markup=item["keyboard"]
-            )
-        except Exception as e:
-            logger.error(
-                "Could not send signal message: %s", e
-            )
+        # إرسال تلقائي عبر البوت للمستخدم مباشرة
+        for item in found:
+            try:
+                await query_or_bot.send_message(
+                    chat_id=chat_id,
+                    text=item["message"],
+                    reply_markup=item["keyboard"]
+                )
+            except Exception as e:
+                logger.error("Could not send automated signal message: %s", e)
 
 
 # =========================================================
-# 12) معالجة أزرار تيليجرام
+# 12) نظام الفحص التلقائي في الخلفية (6:00 م إلى 12:30 ص)
+# =========================================================
+
+def background_auto_scan_worker(application):
+    """
+    يعمل كل 5 دقائق. يتحقق مما إذا كان الوقت الحالي بين 6:00 م و12:30 ص.
+    إذا كان كذلك، يفحص جميع الأسواق على فريم 15 دقيقة تلقائياً.
+    """
+    # نستخدم حلقة لا نهائية تعمل في خلفية البوت
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def run_loop():
+        while True:
+            try:
+                now_sa = datetime.now(SAUDI_TZ)
+                current_time_str = now_sa.strftime("%H:%M")
+                
+                # الفترة المطلوبة: من 18:00 إلى 00:30
+                # التوقيت: 18:00 (6:00 مساءً) إلى 23:59 أو من 00:00 إلى 00:30 (12:30 صباحاً)
+                is_active_time = (
+                    ("18:00" <= current_time_str <= "23:59") or 
+                    ("00:00" <= current_time_str <= "00:30")
+                )
+
+                global TARGET_CHAT_ID
+                if is_active_time and TARGET_CHAT_ID:
+                    logger.info("بدء جولة البحث التلقائي للفريم 15 دقيقة...")
+                    all_markets = []
+                    for group_list in SCAN_GROUPS.values():
+                        for m in group_list:
+                            if m not in all_markets:
+                                all_markets.append(m)
+                    
+                    # تنفيذ الفحص التلقائي لكل الأسواق على فريم 15 دقيقة فقط
+                    await execute_scan(
+                        query_or_bot=application.bot,
+                        markets=all_markets,
+                        intervals=["15min"],
+                        group_title="الفحص التلقائي (فريم 15د)",
+                        chat_id=TARGET_CHAT_ID
+                    )
+            except Exception as e:
+                logger.error("خطأ في نظام البحث التلقائي: %s", e)
+
+            # الانتظار لمدة 5 دقائق (300 ثانية) قبل الجولة القادمة
+            await asyncio.sleep(300)
+
+    loop.run_until_complete(run_loop())
+
+
+# =========================================================
+# 13) معالجة أزرار تيليجرام
 # =========================================================
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    global TARGET_CHAT_ID
+    with CHAT_ID_LOCK:
+        TARGET_CHAT_ID = query.message.chat_id
 
     if data == "BACK":
         await query.edit_message_text(
@@ -1784,7 +1806,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# 13) عداد انتهاء الصفقة
+# 14) عداد انتهاء الصفقة
 # =========================================================
 
 async def timer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1850,7 +1872,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# 14) تشغيل البوت
+# 15) تشغيل البوت
 # =========================================================
 
 def main():
@@ -1874,8 +1896,15 @@ def main():
 
     app.add_error_handler(error_handler)
 
+    # تشغيل خيط البحث التلقائي في الخلفية
+    threading.Thread(
+        target=background_auto_scan_worker,
+        args=(app,),
+        daemon=True
+    ).start()
+
     logger.info(
-        "Strict EO Signal Bot started."
+        "Strict EO Signal Bot started with Automated Background Scanner (15min)."
     )
 
     app.run_polling(
