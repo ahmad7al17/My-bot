@@ -39,7 +39,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("EO_StrictBot")
 
-# معرف المستخدم المستهدف لإرسال التنبيهات التلقائية (سيتم تحديثه تلقائياً عند أول /start)
 TARGET_CHAT_ID = None
 CHAT_ID_LOCK = threading.Lock()
 
@@ -1169,7 +1168,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text(
         "🤖 بوت التحليل الصارم المطور\n"
-        "تم تفعيل نظام البحث التلقائي (فريم 15 دقيقة) من 6:00 مساءً إلى 12:30 صباحاً.\n"
+        "تم تفعيل نظام البحث التلقائي (فريم 5 دقائق كل 3 دقائق) من 6:00 مساءً إلى 12:30 صباحاً.\n"
         "الإشارات احتمالية وليست ضمانًا للربح.\n\n"
         "الأوامر: /help",
         reply_markup=main_keyboard()
@@ -1186,7 +1185,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/backtest EUR/USD 1min — اختبار تاريخي تقريبي\n"
         "/compare EUR/USD 1.08500 — مقارنة السعر مع EO\n"
         "/timer ID — الوقت المتبقي للصفقة\n\n"
-        "البحث التلقائي يعمل يومياً من 6:00 م إلى 12:30 ص للفريم 15 دقيقة."
+        "البحث التلقائي يعمل يومياً من 6:00 م إلى 12:30 ص للفريم 5 دقائق (كل 3 دقائق)."
     )
 
 
@@ -1443,7 +1442,6 @@ async def execute_scan(query_or_bot, markets, intervals, group_title, chat_id=No
             except Exception as e:
                 logger.error("Could not send signal message: %s", e)
     else:
-        # إرسال تلقائي عبر البوت للمستخدم مباشرة
         for item in found:
             try:
                 await query_or_bot.send_message(
@@ -1456,15 +1454,14 @@ async def execute_scan(query_or_bot, markets, intervals, group_title, chat_id=No
 
 
 # =========================================================
-# 12) نظام الفحص التلقائي في الخلفية (6:00 م إلى 12:30 ص)
+# 12) نظام الفحص التلقائي في الخلفية (6:00 م إلى 12:30 ص) - كل 3 دقائق للفريم 5د
 # =========================================================
 
 def background_auto_scan_worker(application):
     """
-    يعمل كل 5 دقائق. يتحقق مما إذا كان الوقت الحالي بين 6:00 م و12:30 ص.
-    إذا كان كذلك، يفحص جميع الأسواق على فريم 15 دقيقة تلقائياً.
+    يعمل كل 3 دقائق. يتحقق مما إذا كان الوقت الحالي بين 6:00 م و12:30 ص.
+    إذا كان كذلك، يفحص جميع الأسواق على فريم 5 دقائق تلقائياً.
     """
-    # نستخدم حلقة لا نهائية تعمل في خلفية البوت
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -1474,8 +1471,6 @@ def background_auto_scan_worker(application):
                 now_sa = datetime.now(SAUDI_TZ)
                 current_time_str = now_sa.strftime("%H:%M")
                 
-                # الفترة المطلوبة: من 18:00 إلى 00:30
-                # التوقيت: 18:00 (6:00 مساءً) إلى 23:59 أو من 00:00 إلى 00:30 (12:30 صباحاً)
                 is_active_time = (
                     ("18:00" <= current_time_str <= "23:59") or 
                     ("00:00" <= current_time_str <= "00:30")
@@ -1483,26 +1478,26 @@ def background_auto_scan_worker(application):
 
                 global TARGET_CHAT_ID
                 if is_active_time and TARGET_CHAT_ID:
-                    logger.info("بدء جولة البحث التلقائي للفريم 15 دقيقة...")
+                    logger.info("بدء جولة البحث التلقائي للفريم 5 دقائق...")
                     all_markets = []
                     for group_list in SCAN_GROUPS.values():
                         for m in group_list:
                             if m not in all_markets:
                                 all_markets.append(m)
                     
-                    # تنفيذ الفحص التلقائي لكل الأسواق على فريم 15 دقيقة فقط
+                    # تنفيذ الفحص التلقائي لكل الأسواق على فريم 5 دقائق فقط
                     await execute_scan(
                         query_or_bot=application.bot,
                         markets=all_markets,
-                        intervals=["15min"],
-                        group_title="الفحص التلقائي (فريم 15د)",
+                        intervals=["5min"],
+                        group_title="الفحص التلقائي (فريم 5د)",
                         chat_id=TARGET_CHAT_ID
                     )
             except Exception as e:
                 logger.error("خطأ في نظام البحث التلقائي: %s", e)
 
-            # الانتظار لمدة 5 دقائق (300 ثانية) قبل الجولة القادمة
-            await asyncio.sleep(300)
+            # الانتظار لمدة 3 دقائق (180 ثانية) قبل الجولة القادمة
+            await asyncio.sleep(180)
 
     loop.run_until_complete(run_loop())
 
@@ -1904,7 +1899,7 @@ def main():
     ).start()
 
     logger.info(
-        "Strict EO Signal Bot started with Automated Background Scanner (15min)."
+        "Strict EO Signal Bot started with Automated Background Scanner (5min interval)."
     )
 
     app.run_polling(
